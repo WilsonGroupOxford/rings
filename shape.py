@@ -10,8 +10,7 @@ from typing import Dict, Sequence, NewType, Tuple, Any
 from matplotlib.patches import Polygon
 import numpy as np
 
-Node = NewType('Node', Any)
-Graph = NewType('Graph', Any)
+Node = NewType('Node', int)
 Coord = NewType('Coord', np.array)
 
 

@@ -6,8 +6,8 @@ Created on Mon Nov 11 13:32:13 2019
 @author: matthew-bailey
 """
 
-from ring_finder import RingFinder
-from shape import Shape, node_list_to_edges
+import copy
+from collections import Counter, defaultdict
 
 from typing import Dict, Sequence, NewType, Tuple, Any
 from matplotlib.patches import Polygon
@@ -16,11 +16,12 @@ import networkx as nx
 from scipy.spatial import Delaunay
 from matplotlib.collections import PatchCollection
 import matplotlib.pyplot as plt
-from collections import Counter, defaultdict
-import copy
 
-Node = NewType('Node', Any)
-Graph = NewType('Graph', Any)
+from ring_finder import RingFinder
+from shape import Shape, node_list_to_edges
+
+Node = NewType('Node', int)
+Graph = NewType('Graph', nx.Graph)
 Coord = NewType('Coord', np.array)
 
 
@@ -56,8 +57,8 @@ class PeriodicRingFinder(RingFinder):
         # Now triangulate the graph and do the real heavy lifting.
         self.tri_graph, self.simplices = self.triangulate_graph()
         self.current_rings = {Shape(node_list_to_edges(simplex),
-                                     self.coords_dict)
-                               for simplex in self.simplices}
+                                    self.coords_dict)
+                              for simplex in self.simplices}
         self.identify_rings()
         self.current_rings = self.find_unique_rings()
 
@@ -75,7 +76,7 @@ class PeriodicRingFinder(RingFinder):
                 modulo_edges.add(modulo_edge)
             new_ring = Shape(modulo_edges)
             unique_rings[new_ring].add(ring)
-    
+
         # The "perimeter ring" is misidentified as a consequence
         # of the images we use. Thankfully, we know that
         # other rings can appear 1x, 2x, 4x, 6x or 9x.
@@ -102,13 +103,13 @@ class PeriodicRingFinder(RingFinder):
                 nodes_copy = {item for edge in copy_ring.edges
                               for item in edge}
                 shared_nodes = nodes_unique.intersection(nodes_copy)
-                
+
                 num_shared_edges.append(len(shared_edges))
                 num_shared_nodes.append(len(shared_nodes))
             max_shared_edges = max(num_shared_edges)
             # If none of the mirror rings share a node with
             # the 'original ring', it means that the original
-            # ring doesn't really exist. It's spurious. 
+            # ring doesn't really exist. It's spurious.
             # I can probably rectify that some other way,
             # but throwing it out seems the best away for now.
             if max(num_shared_nodes) == 0:
@@ -162,14 +163,14 @@ class PeriodicRingFinder(RingFinder):
                 periodic_coords_dict[new_edge_a] = new_a_pos
                 periodic_coords_dict[new_edge_b] = new_b_pos
                 to_add.add((new_edge_a, new_edge_b))
-        
+
         self.graph.add_edges_from(to_add)
         self.coords_dict.update(periodic_coords_dict)
-        
+
     def add_periodic_edges(self):
         """
         Turns periodic edges into minimum-image convention
-        edges. Finds the edges that are longer than 
+        edges. Finds the edges that are longer than
         half a unit cell, and turns them into edges
         between neighbouring images.
         TODO:  remove abhorrent kafkaesque arithmetic 2019-11-13
@@ -178,7 +179,7 @@ class PeriodicRingFinder(RingFinder):
         for ring in self.perimeter_rings:
             perimeter_nodes.update(ring.to_node_list())
         perimeter_nodes.update(self.removed_nodes)
-        
+
         edge_images = set()
         for node in perimeter_nodes:
             edge_images.update(frozenset([node, item])
@@ -221,7 +222,7 @@ class PeriodicRingFinder(RingFinder):
                 for lower_offset in cell_offsets:
                     neighbor_offset = (lower_offset[0], lower_offset[1] - 1)
                     if neighbor_offset[1] < -1:
-                        # No need to connect (0, -1) to (0, -2), 
+                        # No need to connect (0, -1) to (0, -2),
                         # so carry on.
                         continue
 
