@@ -134,6 +134,34 @@ class TestPeriodicRingFinder:
         for ring in rf.current_rings:
             assert len(ring) == 4
 
+    def test_diagonal_links(self):
+        G = nx.Graph()
+        G.add_edges_from([[0, 1], [0, 3], [0, 2], [0, 8], [0, 6],
+                          [1, 2], [1, 4], [1, 7],
+                          [2, 5], [2, 8],
+                          [3, 4], [3, 6], [3, 5],
+                          [4, 5], [4, 7],
+                          [5, 8],
+                          [6, 7], [6, 8],
+                          [7, 8]])
+        coords_dict = {0: np.array([0.0, 0.0]),
+                       1: np.array([1.0, 0.0]),
+                       2: np.array([2.0, 0.0]),
+                       3: np.array([0.0, 1.0]),
+                       4: np.array([1.0, 1.0]),
+                       5: np.array([2.0, 1.0]),
+                       6: np.array([0.0, 2.0]),
+                       7: np.array([1.0, 2.0]),
+                       8: np.array([2.0, 2.0])}
+        fig, ax = plt.subplots()
+        rf = PeriodicRingFinder(graph=G, coords_dict=coords_dict,
+                                    cell=np.array([3.0, 3.0]))
+
+        correct_counter = {3:2, 4:8}
+        this_counter = Counter([len(ring) for ring in rf.current_rings])
+        for item in this_counter.keys():
+            assert correct_counter[item] == this_counter[item]
+
 class TestRealData:
     """
     Class to check against real results, making sure
@@ -200,12 +228,51 @@ class TestRealData:
             for line in fi.readlines():
                 rings.append(len(line.split()))
 
-        print(COORDS_DICT)
         correct_counter = Counter(rings)
         ring_finder = PeriodicRingFinder(G,
                                          COORDS_DICT,
                                          np.array([100.0,
                                                    100.0]))
+        this_counter = Counter([len(ring) for ring in ring_finder.current_rings])
+        for item in this_counter.keys():
+            assert correct_counter[item] == this_counter[item]
+            
+    def test_two_perimeter(self):
+        """
+        Test another one of my collagen configurations, which has a
+        perimeter ring made of two smaller rings joined by a chain.
+        """
+        G = nx.Graph()
+        with open("./data/two-perimeters_edges.dat", "r") as fi:
+
+            for line in fi.readlines():
+                if line.startswith("#"):
+                    continue
+                x, y = [int(item) for item in line.split(", ")]
+                G.add_edge(x, y)
+    
+        COORDS_DICT = {}
+        with open("./data/two-perimeters_coords.dat", "r") as fi:
+            for i, line in enumerate(fi.readlines()):
+                if line.startswith("#"):
+                    continue
+                line = line.split(", ")
+                node_id, x, y = int(line[0]), float(line[1]), float(line[2])
+                COORDS_DICT[node_id] = np.array([x, y])
+        # I calculated these with a pen and a piece of paper,
+        # literally colouring by numbers.
+        correct_counter = {4: 7,
+                           6: 5,
+                           8: 3,
+                           10: 2,
+                           14: 2,
+                           18: 1,
+                           22: 1,
+                           42: 1}
+        ring_finder = PeriodicRingFinder(G,
+                                         COORDS_DICT,
+                                         np.array([81.00977790682138,
+                                                   81.00977790682138]))
         this_counter = Counter([len(ring) for ring in ring_finder.current_rings])
         for item in this_counter.keys():
             assert correct_counter[item] == this_counter[item]

@@ -140,6 +140,10 @@ class Shape:
             connected_nodes = connected_nodes.difference(seen_nodes)
             # Pick the smallest node to move to next, arbitrarily.
             # We'll sort out winding later.
+            if len(connected_nodes) == 0:
+                print("Error: Not connected to any nodes", self.edges, len(self.edges))
+                # Uh oh -- this is a line!
+                break
             next_node = min(connected_nodes)
             node_list.append(next_node)
             seen_nodes = set(node_list)

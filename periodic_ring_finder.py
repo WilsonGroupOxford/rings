@@ -24,7 +24,6 @@ Node = NewType('Node', int)
 Graph = NewType('Graph', nx.Graph)
 Coord = NewType('Coord', np.array)
 
-
 class PeriodicRingFinder(RingFinder):
 
     def __init__(self,
@@ -76,7 +75,7 @@ class PeriodicRingFinder(RingFinder):
                 modulo_edges.add(modulo_edge)
             new_ring = Shape(modulo_edges)
             unique_rings[new_ring].add(ring)
-
+        print([str(ring) for ring in unique_rings])
         # The "perimeter ring" is misidentified as a consequence
         # of the images we use. Thankfully, we know that
         # other rings can appear 1x, 2x, 4x, 6x or 9x.
@@ -84,9 +83,10 @@ class PeriodicRingFinder(RingFinder):
         to_remove = set()
         for ring, ring_copies in unique_rings.items():
             if len(ring_copies) == 8:
-                to_remove.add(set)
+                to_remove.add(ring)
         if to_remove:
             for ring in to_remove:
+                print(ring)
                 del unique_rings[ring]
         # Now, from this set of unique rings we pick just
         # one to plot -- the one that has the most nodes
@@ -205,10 +205,48 @@ class PeriodicRingFinder(RingFinder):
             # because we'll deal with them later.
             distance = np.abs(pos_b - pos_a)
             if distance[0] > self.cutoffs[0] and distance[1] > self.cutoffs[1]:
-                # Add a periodic image
-                # in +x, +y
-                raise NotImplementedError("Corner links not yet implemented")
-                print(pos_a, pos_b, "(+, +)")
+                if np.all(pos_a < pos_b) or np.all(pos_a > pos_b):
+                    # This is a bottom-left top-right link. Add in a
+                    # link from (0, 0) to (1, 1) and (0, 0) to (-1, -1).
+                    if pos_a[0] > pos_b[0]:
+                        top_right_node = edge[0]
+                        bottom_left_node = edge[1]
+                    else:
+                        top_right_node = edge[1]
+                        bottom_left_node = edge[0]
+
+                    top_right_offset = num_nodes * cell_offsets.index((1, 1))
+                    bottom_left_offset = num_nodes * cell_offsets.index((-1, -1))
+                    to_add.add((top_right_node, 
+                                bottom_left_node + top_right_offset))
+                    to_add.add((bottom_left_node, 
+                                top_right_node + bottom_left_offset))
+
+                    # We also need to add a bond from (-1, 0) to (0, 1)
+                    # and from (0, -1) to (1, 0)
+                    to_add.add((top_right_node   + (num_nodes * cell_offsets.index((-1, 0))), 
+                                bottom_left_node + (num_nodes * cell_offsets.index(( 0, 1)))
+                               ))
+                    to_add.add((top_right_node   + (num_nodes * cell_offsets.index(( 0, -1))), 
+                                bottom_left_node + (num_nodes * cell_offsets.index(( 1, 0)))
+                               ))
+                else:
+                    # This is a top-left bottom-right link. Add in a
+                    # link from (0, 0) to (-1, 1) and (0, 0) to (-1, 1).
+                    if pos_a[0] > pos_b[0]:
+                        bottom_right_node = edge[0]
+                        top_left_node = edge[1]
+                    else:
+                        bottom_right_node = edge[1]
+                        top_left_node = edge[0]
+
+                    top_left_offset = num_nodes * cell_offsets.index((-1, 1))
+                    bottom_right_offset = num_nodes * cell_offsets.index((1, -1))
+
+                    to_add.add((top_left_node, 
+                                bottom_right_node + top_left_offset))
+                    to_add.add((bottom_right_node, 
+                                top_left_node + bottom_right_offset))
             elif distance[1] > self.cutoffs[1]:
                 # There is an edge that spans the y-coordinate.
                 # Remove it, and add in the two new edges.
@@ -280,5 +318,6 @@ if __name__ == "__main__":
     FIG.patch.set_visible(False)
     AX.axis('off')
     ring_finder.draw_onto(AX)
-    AX.set_xlim(0, 100)
-    AX.set_ylim(0, 100)
+    AX.set_xlim(-95, 180)
+    AX.set_ylim(-95, 180)
+    FIG.savefig("./periodic-graph.pdf")

@@ -23,7 +23,6 @@ Graph = NewType('Graph', nx.Graph)
 Coord = NewType('Coord', np.array)
 Edge = NewType('Edge', FrozenSet[Tuple[Node, Node]])
 
-
 class RingFinder:
     """
     A group of subroutines to find rings in a combination
@@ -51,6 +50,7 @@ class RingFinder:
         the 'infinite face' rings and store it in self.perimeter_rings
         """
         self.graph: Graph = graph
+        self.remove_self_edges()
         self.coords_dict: Dict[Node, Coord] = coords_dict
 
         # Tidying up stage -- remove the long edges,
@@ -60,6 +60,7 @@ class RingFinder:
             self.remove_long_edges()
         self.removed_nodes, self.removed_edges = self.remove_single_coordinate_sites()
         self.removable_edges = None
+
         # Now triangulate the graph and do the real heavy lifting.
         self.tri_graph, self.simplices = self.triangulate_graph()
         self.current_rings = {Shape(node_list_to_edges(simplex),
@@ -72,6 +73,16 @@ class RingFinder:
             self.perimeter_rings = self.find_perimeter_rings()
         else:
             self.perimeter_rings = None
+
+    def remove_self_edges(self):
+        """
+        Removes all edges that loop round on themselves.
+        """
+        to_remove = set()
+        for edge in self.graph.edges:
+            if len(set(edge)) == 1:
+                to_remove.add(edge)
+        self.graph.remove_edges_from(to_remove)
 
     def find_perimeter_rings(self):
         """
@@ -89,17 +100,28 @@ class RingFinder:
         single_use_edges = {key for key, count in edge_use_count.items()
                             if count == 1}
         single_use_edges = frozenset(single_use_edges)
+        
+        # These are lines connecting two 'rings', and must be
+        # passed upwards.
+        zero_use_edges = {frozenset(edge) for edge in
+                          self.graph.edges if edge_use_count[frozenset(edge)] == 0}
+        zero_use_edges = frozenset(zero_use_edges)
         # Turn this list of edges into a graph and
         # count how many rings are in it.
         perimeter_ring_graph = nx.Graph()
         perimeter_ring_graph.add_edges_from(single_use_edges)
+        perimeter_ring_graph.add_edges_from(zero_use_edges)
         perimeter_coords = {node: self.coords_dict[node]
                             for node in perimeter_ring_graph.nodes()}
         sub_ring_finder = RingFinder(perimeter_ring_graph,
                                      coords_dict=perimeter_coords,
                                      cutoffs=None,
                                      find_perimeter=False)
-        return sub_ring_finder.current_rings
+        if zero_use_edges:
+            edge_rings = sub_ring_finder.current_rings.union({Shape(zero_use_edges)})
+        else:
+            edge_rings = sub_ring_finder.current_rings
+        return edge_rings
 
     def remove_long_edges(self):
         """
@@ -206,6 +228,43 @@ class RingFinder:
                 del self.coords_dict[node]
         return removed_nodes, removed_edges
 
+    def flip_degenerate_edge(self, edge) -> bool:
+        """
+        Flips a degenerate edge in a Delaunay triangulation
+        in an attempt to match the original graph better.
+        | \ | <-> | \ | 
+        Works by identifying if the edge is part of a rectangle,
+        and removing this edge from self.tri_graph if it
+        is, and adding the other diagonal.
+        :return did_flip: did we successfully flip the edge?
+        """
+        simplices_in = []
+        # TODO: Same O(n^2) problem here! Even worse because
+        # n_triangles is so very very big. Could optimise this
+        # by precalculating it.
+        nodes = list(edge)
+        neighbors = [set(self.tri_graph.neighbors(node)) for node in nodes]
+        other_edge = tuple(neighbors[0].intersection(neighbors[1]))
+        if other_edge in self.tri_graph.edges and other_edge not in self.graph.edges:
+            self.tri_graph.remove_edge(*other_edge)
+            self.tri_graph.add_edge(*edge)
+            # We also need to reconstruct the simplices before we go any further.
+            to_remove = []
+            for shape in self.current_rings:
+                if frozenset(other_edge) in shape:
+                    # Note that because we've overridden __hash__
+                    # we must construct a new shape.
+                    to_remove.append(shape)
+            for shape in to_remove:
+                self.current_rings.remove(shape)
+             
+            for other_node in other_edge:
+                new_edges = frozenset([frozenset([node, other_node]) for node in edge] + [edge])
+                new_shape = Shape(new_edges, coords_dict=self.coords_dict)
+                self.current_rings.add(new_shape)
+            return True
+        return False
+
     def identify_rings(self,
                        max_to_remove: int = None):
         """
@@ -233,10 +292,22 @@ class RingFinder:
 
         if not main_edge_set.issubset(tri_edge_set):
             missing_edges = main_edge_set.difference(tri_edge_set)
-            raise RuntimeError("There are edges in the main graph that do " +
-                               "not exist in the Delauney triangulation: " +
-                               f"{missing_edges}. Is your periodic box " +
-                               "the right size?")
+            # There is one case where this is salvagable, and that's
+            # the case of degenerate triangulations (i.e. |\| vs |/|)
+            # Try to spot those before bailing out.
+            print("Missing the following edges:", missing_edges)
+            for edge in missing_edges:
+                did_flip = self.flip_degenerate_edge(edge)
+                if not did_flip:
+                    # If we didn't flip that one, it's still missing
+                    # so we needn't bother with the rest.
+                    raise RuntimeError("There are edges in the main graph that do " +
+                                       "not exist in the Delauney triangulation: " +
+                                       f"{missing_edges}. Is your periodic box " +
+                                       "the right size?")
+            # Get here only if we successfully flipped all the edges.
+            # Update the tri_edge_set.
+            tri_edge_set = {frozenset(edge) for edge in self.tri_graph.edges()}
 
         self.removable_edges: Set[Edge] = tri_edge_set.difference(main_edge_set)
         if max_to_remove is None:
@@ -312,7 +383,8 @@ class RingFinder:
 
     def draw_onto(self,
                   ax,
-                  cmap_name: str = "viridis") -> None:
+                  cmap_name: str = "viridis",
+                  **kwargs) -> None:
         """
         Draws the coloured polygons onto a matplotlib
         axis.
@@ -321,21 +393,34 @@ class RingFinder:
         sizes = self.ring_sizes()
         size_range = max(sizes) + 1 - min(sizes)
         this_cmap = plt.cm.get_cmap(cmap_name)(np.linspace(0, 1, size_range))
-        colours = [this_cmap[size - 4] for size in sizes]
+        colours = [this_cmap[size - min(sizes)] for size in sizes]
 
-        p = PatchCollection(polys, linewidth=5)
+        p = PatchCollection(polys, linewidth=2.0)
         p.set_color(colours)
+        p.set_linestyle("dotted")
         p.set_edgecolor("black")
         ax.add_collection(p)
         edges_to_draw = [tuple(edge) for ring in self.current_rings
                          for edge in ring.edges]
-        nx.draw_networkx_edges(self.graph,
+        try:
+            graph_to_plot = self.aperiodic_graph
+        except AttributeError:
+            graph_to_plot = self.graph 
+        nx.draw_networkx_edges(graph_to_plot,
                                ax=ax,
                                pos=self.coords_dict,
                                edge_color="black",
                                zorder=1000,
-                               width=3,
-                               edge_list=edges_to_draw)
+                               width=2.5,
+                               edge_list=edges_to_draw,
+                               **kwargs
+                               )
+        nx.draw_networkx_nodes(graph_to_plot,
+                               ax=ax,
+                               pos=self.coords_dict,
+                               node_color="black",
+                               node_size=2.5
+                               )
 
 
 if __name__ == "__main__":
@@ -357,11 +442,14 @@ if __name__ == "__main__":
     FIG.patch.set_visible(False)
     AX.axis('off')
     ring_finder = RingFinder(G, COORDS_DICT, np.array([20.0, 20.0]))
-    AX.set_xlim(0, 155)
-    AX.set_ylim(0, 155)
-    ring_finder.draw_onto(AX)
-    for perimeter_ring in ring_finder.perimeter_rings:
-        edgelist = [tuple(item) for item in perimeter_ring.edges]
-        nx.draw_networkx_edges(ring_finder.graph, ax=AX, pos=COORDS_DICT,
-                              edge_color="orange", zorder=1000, width=5,
-                              edgelist=edgelist)
+    AX.set_xlim(-95, 180)
+    AX.set_ylim(-95, 180)
+    ring_finder.draw_onto(AX, style="dashed")
+    #for perimeter_ring in ring_finder.perimeter_rings:
+    #    edgelist = [tuple(item) for item in perimeter_ring.edges]
+    #nx.draw_networkx_edges(ring_finder.graph, ax=AX, pos=COORDS_DICT,
+    #                          edge_color="orange", zorder=1000, width=5,
+    #                          edgelist=edgelist)
+    nx.draw_networkx_edges(ring_finder.graph, ax=AX, pos=COORDS_DICT,
+                             edge_color="black", zorder=1000, width=3)
+    FIG.savefig("./aperiod_graph.pdf")
