@@ -67,6 +67,7 @@ def node_list_to_edges(node_list: Sequence[Node],
     return frozenset(edges)
 
 
+
 class Shape:
     def __init__(self,
                  edges: Sequence[Tuple[Node, Node]],
@@ -83,6 +84,7 @@ class Shape:
         """
         self.edges = frozenset(edges)
         self.coords_dict = coords_dict
+        self._area = None
 
     def merge(self, other) -> None:
         """
@@ -116,6 +118,16 @@ class Shape:
                  for node in edge}
         return nodes
 
+    @property
+    def area(self):
+        """
+        Returns the unsigned area of the ring, using
+        a cached value if possible.
+        """
+        if self._area is None:
+            self.area = np.abs(calculate_polygon_area(self.node_list, self.coords_dict))
+        return self._area
+
     def to_node_list(self):
         """
         Turns the set of edges into an ordered list. e.g.
@@ -141,15 +153,16 @@ class Shape:
             # Pick the smallest node to move to next, arbitrarily.
             # We'll sort out winding later.
             if len(connected_nodes) == 0:
-                print("Error: Not connected to any nodes", self.edges, len(self.edges))
-                # Uh oh -- this is a line!
-                break
+                # This is a line, not a ring! Just dump all the nodes
+                # and pray.
+                return list(self.nodes)
             next_node = min(connected_nodes)
             node_list.append(next_node)
             seen_nodes = set(node_list)
 
         if self.coords_dict is not None:
             signed_area = calculate_polygon_area(node_list, self.coords_dict)
+            self._area = np.abs(signed_area)
             if signed_area < 0:
                 # If the signed area is negative, then the ordering
                 # is wrong. That's easily fixed by reversing the list,
@@ -209,3 +222,13 @@ class Shape:
         size of the shape
         """
         return len(self.edges)
+
+class Line(Shape):
+    def __init__(self,
+                 edges: Sequence[Tuple[Node, Node]],
+                 coords_dict: Dict[Node, Coord] = None):
+        super().__init__(self, edges, coords_dict)
+
+    @property
+    def area(self):
+        raise AttributeError("Lines do not meaningfully have an area")

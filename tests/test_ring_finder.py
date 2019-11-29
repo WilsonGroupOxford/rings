@@ -276,4 +276,40 @@ class TestRealData:
         this_counter = Counter([len(ring) for ring in ring_finder.current_rings])
         for item in this_counter.keys():
             assert correct_counter[item] == this_counter[item]
+
+    def test_doublecount_large(self):
+        """
+        Test another one of my collagen configurations, which spuriously
+        double counts the largest ring.
+        """
+        G = nx.Graph()
+        with open("./data/doublecount_large_edges.dat", "r") as fi:
+
+            for line in fi.readlines():
+                if line.startswith("#"):
+                    continue
+                x, y = [int(item) for item in line.split(", ")]
+                G.add_edge(x, y)
     
+        COORDS_DICT = {}
+        with open("./data/doublecount_large_coords.dat", "r") as fi:
+            for i, line in enumerate(fi.readlines()):
+                if line.startswith("#"):
+                    continue
+                line = line.split(", ")
+                node_id, x, y = int(line[0]), float(line[1]), float(line[2])
+                COORDS_DICT[node_id] = np.array([x, y])
+        FIG, AX = plt.subplots()
+        nx.draw(G, pos=COORDS_DICT, ax=AX, node_size=5)
+        FIG.savefig("./test_doublecount_large_graph.pdf")
+        ring_finder = PeriodicRingFinder(G,
+                                         COORDS_DICT,
+                                         np.array([83.00977790682138,
+                                                   83.00977790682138]))
+        this_counter = Counter([len(ring) for ring in ring_finder.current_rings])
+        FIG, AX = plt.subplots()
+        ring_finder.draw_onto(AX)
+        FIG.savefig("./test_doublecount_large.pdf")
+        for item in this_counter.keys():
+            assert correct_counter[item] == this_counter[item]
+     

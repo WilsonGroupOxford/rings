@@ -16,7 +16,7 @@ from matplotlib.patches import Polygon
 from matplotlib.collections import PatchCollection
 import matplotlib.pyplot as plt
 
-from shape import Shape, node_list_to_edges
+from .shape import Shape, node_list_to_edges
 
 Node = NewType('Node', int)
 Graph = NewType('Graph', nx.Graph)
@@ -67,7 +67,6 @@ class RingFinder:
                                      self.coords_dict)
                               for simplex in self.simplices}
         self.identify_rings()
-
         # In the case of disjoint rings, there can be multiple perimeters.
         if find_perimeter:
             self.perimeter_rings = self.find_perimeter_rings()
@@ -127,43 +126,29 @@ class RingFinder:
         """
         Remove any edges that are longer than
         a set of cutoffs, useful to make a periodic cell
-        aperiodic. Uses the following features from
-        the class:
-        :param graph: the networkx graph to detect single-coordinate
-        nodes in
-        :param coords_dict: a dictionary, keyed by nodes,
-        with values being the [x, y] coordinates of the nodes, which
-        we use to remove long bonds.
-        :param cutoffs: an [max_x, max_y] sequence, removing any edges
-        with a component longer than max_x or max_y. For the minimum
-        image convention, we want these to be half the both length.
-        :return graph: a graph minus the edges that are too long. Note
-        that this mutates the original graph, so the return value can
-        be ignored.
+        aperiodic.
+        :return graph: a graph minus the edges that are too long. Note that this mutates the original graph, so the return value can be ignored.
         """
         to_remove = set()
         for edge in self.graph.edges():
             pos_a = self.coords_dict[edge[0]]
             pos_b = self.coords_dict[edge[1]]
             distance = np.abs(pos_b - pos_a)
+            
             if distance[0] > self.cutoffs[0]:
                 to_remove.add(edge)
             elif distance[1] > self.cutoffs[1]:
                 to_remove.add(edge)
         self.graph.remove_edges_from(to_remove)
+        return self.graph
 
     def triangulate_graph(self):
         """
         Constructs a Delauney triangulation
         of a set of coordinates, and returns
         it as a networkx graph.
-        :param coordinates_dict: a dictionary, with key
-        being a node and the value being an [x, y]
-        numpy array.
-        :return tri_graph: a Delaunay triangulation
-        of the original graph.
-        :return mapped_simplices: a list of all the
-        edges making up triangular simplicies
+        :return tri_graph: a Delaunay triangulation of the original graph.
+        :return mapped_simplices: a list of all the edges making up triangular simplicies
         """
 
         # Turn the coordinate dictionary into
@@ -199,14 +184,7 @@ class RingFinder:
         and all the sites that would be single coordinate
         if that one were removed, and so on.
         Mutates the input data by deleting entries.
-        :param main_graph: the networkx graph to detect single-coordinate
-        nodes in
-        :param coords_dict: the coordinates of the nodes, which we
-        remove to make sure they don't get misused in the Delauney
-        triangulation.
-        :return graph: a graph minus the single coordinate notes. Note
-        that this mutates the original graph, so the return value can
-        be ignored.
+        :return graph: a graph minus the single coordinate notes. Note that this mutates the original graph, so the return value can be ignored.
         """
         removed_nodes = set()
         removed_edges = set()
@@ -245,6 +223,10 @@ class RingFinder:
         nodes = list(edge)
         neighbors = [set(self.tri_graph.neighbors(node)) for node in nodes]
         other_edge = tuple(neighbors[0].intersection(neighbors[1]))
+        if len(other_edge) != 2:
+            # There are more than two common edges between these two nodes.
+            # That means this isn't a valid triangulation! Bail out.
+            return False
         if other_edge in self.tri_graph.edges and other_edge not in self.graph.edges:
             self.tri_graph.remove_edge(*other_edge)
             self.tri_graph.add_edge(*edge)
@@ -272,13 +254,7 @@ class RingFinder:
         in the original graph, identifying rings in the process.
         Start off with a set of simplices as the building blocks
         of rings.
-        :param main_graph: the networkx graph to detect cycles in
-        :param tri_graph: the Delauney triangulation of main_graph,
-        as the same graph type.
-        :param simplices: a list of tuples, each of which is three
-        node ids representing a triangle.
-        :param max_to_remove: the maximum number of edges to remove.
-        Useful for making animations, but is None by default.
+        :param max_to_remove: the maximum number of edges to remove. Useful for making animations, but is None by default.
         """
 
         # First we need to check if there are any edges
@@ -295,7 +271,6 @@ class RingFinder:
             # There is one case where this is salvagable, and that's
             # the case of degenerate triangulations (i.e. |\| vs |/|)
             # Try to spot those before bailing out.
-            print("Missing the following edges:", missing_edges)
             for edge in missing_edges:
                 did_flip = self.flip_degenerate_edge(edge)
                 if not did_flip:

@@ -16,9 +16,9 @@ import networkx as nx
 from scipy.spatial import Delaunay
 from matplotlib.collections import PatchCollection
 import matplotlib.pyplot as plt
-
-from ring_finder import RingFinder
-from shape import Shape, node_list_to_edges
+import PIL
+from .ring_finder import RingFinder
+from .shape import Shape, node_list_to_edges
 
 Node = NewType('Node', int)
 Graph = NewType('Graph', nx.Graph)
@@ -50,7 +50,7 @@ class PeriodicRingFinder(RingFinder):
         # and remove the single coordinate sites.
         self.add_periodic_images()
         self.add_periodic_edges()
-        self.remove_long_edges()
+        self.graph = self.remove_long_edges()
         self.remove_single_coordinate_sites()
         self.removable_edges = None
         # Now triangulate the graph and do the real heavy lifting.
@@ -58,8 +58,20 @@ class PeriodicRingFinder(RingFinder):
         self.current_rings = {Shape(node_list_to_edges(simplex),
                                     self.coords_dict)
                               for simplex in self.simplices}
+
         self.identify_rings()
         self.current_rings = self.find_unique_rings()
+    
+    def quick_draw(self, filename):
+        fig, ax = plt.subplots()
+        nx.draw(self.graph, pos=self.coords_dict, ax=ax, node_size=5)
+        colors = ["red", "blue", "green", "orange", "pink", "brown"]
+        for i, perimeter_ring in enumerate(self.perimeter_rings):
+            nx.draw_networkx_edges(self.graph, pos=self.coords_dict,
+                                   edgelist=[tuple(edge) for edge in perimeter_ring.edges],
+                                   edge_color=colors[i], width=5.0)
+        fig.savefig(filename, dpi=800)
+        plt.close(fig)
 
     def find_unique_rings(self):
         """
@@ -75,7 +87,7 @@ class PeriodicRingFinder(RingFinder):
                 modulo_edges.add(modulo_edge)
             new_ring = Shape(modulo_edges)
             unique_rings[new_ring].add(ring)
-        print([str(ring) for ring in unique_rings])
+
         # The "perimeter ring" is misidentified as a consequence
         # of the images we use. Thankfully, we know that
         # other rings can appear 1x, 2x, 4x, 6x or 9x.
@@ -86,7 +98,6 @@ class PeriodicRingFinder(RingFinder):
                 to_remove.add(ring)
         if to_remove:
             for ring in to_remove:
-                print(ring)
                 del unique_rings[ring]
         # Now, from this set of unique rings we pick just
         # one to plot -- the one that has the most nodes
@@ -144,7 +155,7 @@ class PeriodicRingFinder(RingFinder):
         to_add = set()
         perimeter_nodes = set()
         for ring in self.perimeter_rings:
-            perimeter_nodes.update(ring.to_node_list())
+            perimeter_nodes.update(ring.nodes)
         perimeter_nodes.update(self.removed_nodes)
         edge_images = set()
         for node in perimeter_nodes:
@@ -177,7 +188,7 @@ class PeriodicRingFinder(RingFinder):
         """
         perimeter_nodes = set()
         for ring in self.perimeter_rings:
-            perimeter_nodes.update(ring.to_node_list())
+            perimeter_nodes.update(ring.nodes)
         perimeter_nodes.update(self.removed_nodes)
 
         edge_images = set()
