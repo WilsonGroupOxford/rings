@@ -30,7 +30,7 @@ def generate_polygon(num_sides: int, radius:float = 1.0, centre=np.zeros(2),
         edges.append((i + edge_offset, (i + 1) % num_sides + edge_offset))
         this_coord = np.array((radius * math.sin(i * angle), 
                           radius * math.cos(i * angle)))
-        coordinates[i] = this_coord + centre
+        coordinates[i + edge_offset] = this_coord + centre
     return coordinates, edges
 
 class TestRingFinder:
@@ -76,6 +76,22 @@ class TestRingFinder:
             assert len(ring) == 4
         for ring in rf.perimeter_rings:
             assert len(ring) == 6
+
+    def test_nested_ring(self):
+        """
+        Tests a square inside a square, but joined up.
+        """
+        G = nx.Graph()
+        outer_sq_coords, outer_sq_edges = generate_polygon(4, radius=3.0)
+        inner_sq_coords, inner_sq_edges = generate_polygon(4, radius=1.0, edge_offset=4)
+        G.add_edges_from(outer_sq_edges)
+        G.add_edges_from(inner_sq_edges)
+        G.add_edge(0, 4)
+        outer_sq_coords.update(inner_sq_coords)
+        fig, ax = plt.subplots()
+        ring_finder = RingFinder(G, outer_sq_coords)
+        ring_finder.draw_onto(ax)
+        assert [len(ring) for ring in ring_finder.current_rings] == [9, 4]
             
 class TestPeriodicRingFinder:
     def test_one_ring(self):
@@ -282,14 +298,8 @@ class TestRealData:
         Test another one of my collagen configurations, which spuriously
         double counts the largest ring.
         """
-        G = nx.Graph()
-        with open("./data/doublecount_large_edges.dat", "r") as fi:
-
-            for line in fi.readlines():
-                if line.startswith("#"):
-                    continue
-                x, y = [int(item) for item in line.split(", ")]
-                G.add_edge(x, y)
+        G = nx.read_edgelist("./data/doublecount_large_edges.dat", comments="#", delimiter=",",
+                             nodetype=int)
     
         COORDS_DICT = {}
         with open("./data/doublecount_large_coords.dat", "r") as fi:
@@ -299,17 +309,12 @@ class TestRealData:
                 line = line.split(", ")
                 node_id, x, y = int(line[0]), float(line[1]), float(line[2])
                 COORDS_DICT[node_id] = np.array([x, y])
-        FIG, AX = plt.subplots()
-        nx.draw(G, pos=COORDS_DICT, ax=AX, node_size=5)
-        FIG.savefig("./test_doublecount_large_graph.pdf")
         ring_finder = PeriodicRingFinder(G,
                                          COORDS_DICT,
                                          np.array([83.00977790682138,
                                                    83.00977790682138]))
         this_counter = Counter([len(ring) for ring in ring_finder.current_rings])
-        FIG, AX = plt.subplots()
-        ring_finder.draw_onto(AX)
-        FIG.savefig("./test_doublecount_large.pdf")
+        correct_counter = {8: 6, 12: 5, 48: 2, 30: 2, 28: 1, 80: 1, 20: 1}
         for item in this_counter.keys():
             assert correct_counter[item] == this_counter[item]
      

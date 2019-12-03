@@ -17,8 +17,12 @@ from scipy.spatial import Delaunay
 from matplotlib.collections import PatchCollection
 import matplotlib.pyplot as plt
 import PIL
-from .ring_finder import RingFinder
-from .shape import Shape, node_list_to_edges
+try:
+    from .ring_finder import RingFinder
+    from .shape import Shape, node_list_to_edges
+except ImportError:
+    from ring_finder import RingFinder
+    from shape import Shape, node_list_to_edges
 
 Node = NewType('Node', int)
 Graph = NewType('Graph', nx.Graph)
@@ -38,6 +42,7 @@ class PeriodicRingFinder(RingFinder):
         self.cutoffs = cell / 2.0
         self.coords_dict: Dict[Node, Coord] = coords_dict
         self.original_nodes = {key for key in self.coords_dict.keys()}
+        self.perimeter_rings = None
         # First, do the aperiodic computation.
         super().__init__(graph=self.graph,
                          coords_dict=self.coords_dict,
@@ -61,17 +66,6 @@ class PeriodicRingFinder(RingFinder):
 
         self.identify_rings()
         self.current_rings = self.find_unique_rings()
-    
-    def quick_draw(self, filename):
-        fig, ax = plt.subplots()
-        nx.draw(self.graph, pos=self.coords_dict, ax=ax, node_size=5)
-        colors = ["red", "blue", "green", "orange", "pink", "brown"]
-        for i, perimeter_ring in enumerate(self.perimeter_rings):
-            nx.draw_networkx_edges(self.graph, pos=self.coords_dict,
-                                   edgelist=[tuple(edge) for edge in perimeter_ring.edges],
-                                   edge_color=colors[i], width=5.0)
-        fig.savefig(filename, dpi=800)
-        plt.close(fig)
 
     def find_unique_rings(self):
         """
@@ -129,6 +123,37 @@ class PeriodicRingFinder(RingFinder):
             canonical_rings.add(copy_rings[max_shared_idx])
         return canonical_rings
 
+    def add_link_between(self, node_a, node_b, image_a, image_b):
+        """
+        Adds edges between all combinations of node_a and node_b
+        across two periodic images (i.e. (a_a, b_b), (a_b, b_a)
+        (a_a, b_a), (a_b, b_b)). Then we let remove_long_edges
+        sort them out.
+        :param node_a:
+        :param node_b:
+        :param image_a: a tuple in the form (x, y) indicating the offset of this image from the centre
+        :param image_b: a tuple in the form (x, y) indicating the offset of this image from the centre.
+        """
+
+        # Make sure (0, 0) is the first offset, so we don't duplicate
+        # the central nodes. The rest can be in any order as we
+        # look them up later.
+        num_nodes = len(self.original_nodes)
+        cell_offsets = [(0, 0), (1, 1), (1, 0), (1, -1),
+                        (0, 1), (0, -1),
+                        (-1, 1), (-1, 0), (-1, -1)]
+        assert image_a in cell_offsets, f"{image_a} not in {cell_offsets}"
+        assert image_b in cell_offsets, f"{image_b} not in {cell_offsets}"
+        assert 0 <= node_a and node_a <= num_nodes, f"{node_a} must be a non-image index (0 <= node_a <= {num_nodes})"
+        assert 0 <= node_b and node_b <= num_nodes, f"{node_b} must be a non-image index (0 <= node_b <= {num_nodes})"
+
+        image_a_offset = num_nodes * cell_offsets.index(image_a)
+        image_b_offset = num_nodes * cell_offsets.index(image_b)
+        self.graph.add_edge(node_a  + image_a_offset, 
+                            node_b + image_b_offset)
+        self.graph.add_edge(node_a  + image_b_offset, 
+                            node_b + image_a_offset)
+        
     def add_periodic_images(self):
         """
         Remove any edges that are longer than
@@ -196,113 +221,51 @@ class PeriodicRingFinder(RingFinder):
             edge_images.update(frozenset([node, item])
                                for item in set(self.graph.neighbors(node)))
         handled_nodes = set(self.aperiodic_graph.nodes())
-        handled_nodes = handled_nodes.difference(perimeter_nodes)
-        to_add = set()
-        to_remove = set()
-        # Make sure (0, 0) is the first offset, so we don't duplicate
-        # the central nodes. The rest can be in any order as we
-        # look them up later.
-        cell_offsets = [(0, 0), (1, 1), (1, 0), (1, -1),
-                        (0, 1), (0, -1),
-                        (-1, 1), (-1, 0), (-1, -1)]
-        num_nodes = len(self.original_nodes)
+        handled_nodes = handled_nodes.difference(perimeter_nodes)     
+        num_nodes = len(self.original_nodes) 
         for edge in edge_images:
             edge = tuple(edge)
             if edge[0] % num_nodes in handled_nodes and edge[1] % num_nodes in handled_nodes:
                 continue
             pos_a = self.coords_dict[edge[0]]
             pos_b = self.coords_dict[edge[1]]
-            # Skip the "periodic" bonds in the images,
-            # because we'll deal with them later.
             distance = np.abs(pos_b - pos_a)
             if distance[0] > self.cutoffs[0] and distance[1] > self.cutoffs[1]:
                 if np.all(pos_a < pos_b) or np.all(pos_a > pos_b):
                     # This is a bottom-left top-right link. Add in a
                     # link from (0, 0) to (1, 1) and (0, 0) to (-1, -1).
-                    if pos_a[0] > pos_b[0]:
-                        top_right_node = edge[0]
-                        bottom_left_node = edge[1]
-                    else:
-                        top_right_node = edge[1]
-                        bottom_left_node = edge[0]
-
-                    top_right_offset = num_nodes * cell_offsets.index((1, 1))
-                    bottom_left_offset = num_nodes * cell_offsets.index((-1, -1))
-                    to_add.add((top_right_node, 
-                                bottom_left_node + top_right_offset))
-                    to_add.add((bottom_left_node, 
-                                top_right_node + bottom_left_offset))
-
-                    # We also need to add a bond from (-1, 0) to (0, 1)
-                    # and from (0, -1) to (1, 0)
-                    to_add.add((top_right_node   + (num_nodes * cell_offsets.index((-1, 0))), 
-                                bottom_left_node + (num_nodes * cell_offsets.index(( 0, 1)))
-                               ))
-                    to_add.add((top_right_node   + (num_nodes * cell_offsets.index(( 0, -1))), 
-                                bottom_left_node + (num_nodes * cell_offsets.index(( 1, 0)))
-                               ))
+                    self.add_link_between(edge[0], edge[1], ( 0, 0), ( 1, 1))
+                    self.add_link_between(edge[0], edge[1], ( 0, 0), (-1,-1))
+                    self.add_link_between(edge[0], edge[1], (-1, 0), ( 0, 1))
+                    self.add_link_between(edge[0], edge[1], ( 0,-1), ( 1, 0))
                 else:
                     # This is a top-left bottom-right link. Add in a
                     # link from (0, 0) to (-1, 1) and (0, 0) to (-1, 1).
-                    if pos_a[0] > pos_b[0]:
-                        bottom_right_node = edge[0]
-                        top_left_node = edge[1]
-                    else:
-                        bottom_right_node = edge[1]
-                        top_left_node = edge[0]
-
-                    top_left_offset = num_nodes * cell_offsets.index((-1, 1))
-                    bottom_right_offset = num_nodes * cell_offsets.index((1, -1))
-
-                    to_add.add((top_left_node, 
-                                bottom_right_node + top_left_offset))
-                    to_add.add((bottom_right_node, 
-                                top_left_node + bottom_right_offset))
+                    self.add_link_between(edge[0], edge[1], (0, 0), (-1, 1))
+                    self.add_link_between(edge[0], edge[1], (0, 0), ( 1,-1))
+                    self.add_link_between(edge[0], edge[1], (1, 0), ( 0, 1))
+                    self.add_link_between(edge[0], edge[1], (0,-1), (-1, 0))
             elif distance[1] > self.cutoffs[1]:
                 # There is an edge that spans the y-coordinate.
-                # Remove it, and add in the two new edges.
-                to_remove.add(edge)
+                # Remove it, and add in the six new edges
+                self.add_link_between(edge[0], edge[1], (-1, 0), (-1, -1))
+                self.add_link_between(edge[0], edge[1], ( 0, 0), ( 0, -1))
+                self.add_link_between(edge[0], edge[1], ( 1, 0), ( 1, -1))
 
-                # Find the lower and upper of the two nodes.
-                lower_node = edge[np.argmin([pos_a[1], pos_b[1]])]
-                upper_node = edge[np.argmax([pos_a[1], pos_b[1]])]
-
-                # There are 6 connections to make here.
-                for lower_offset in cell_offsets:
-                    neighbor_offset = (lower_offset[0], lower_offset[1] - 1)
-                    if neighbor_offset[1] < -1:
-                        # No need to connect (0, -1) to (0, -2),
-                        # so carry on.
-                        continue
-
-                    node_mult = cell_offsets.index(lower_offset)
-                    neighbor_mult = cell_offsets.index(neighbor_offset)
-
-                    to_add.add((lower_node + (node_mult * num_nodes),
-                                upper_node + (neighbor_mult * num_nodes)))
+                self.add_link_between(edge[0], edge[1], (-1, 1), (-1, 0))
+                self.add_link_between(edge[0], edge[1], ( 0, 1), ( 0, 0))
+                self.add_link_between(edge[0], edge[1], ( 1, 1), ( 1, 0))
 
             elif distance[0] > self.cutoffs[0]:
-                # There is an edge that spans the y-coordinate.
-                # Remove it, and add in the two new edges.
-                to_remove.add(edge)
+                # There is an edge that spans the x-coordinate.
+                # Remove it, and add in the six new edges.
+                self.add_link_between(edge[0], edge[1], ( 1,-1), ( 0,-1))
+                self.add_link_between(edge[0], edge[1], ( 1, 0), ( 0, 0))
+                self.add_link_between(edge[0], edge[1], ( 1, 1), ( 0, 1))
 
-                # Find the lower and upper of the two nodes.
-                lower_node = edge[np.argmin([pos_a[0], pos_b[0]])]
-                upper_node = edge[np.argmax([pos_a[0], pos_b[0]])]
-
-                # There are 6 connections to make here.
-                for lower_offset in cell_offsets:
-                    neighbor_offset = (lower_offset[0] - 1, lower_offset[1])
-                    if neighbor_offset[0] < -1:
-                        continue
-
-                    node_mult = cell_offsets.index(lower_offset)
-                    neighbor_mult = cell_offsets.index(neighbor_offset)
-
-                    to_add.add((lower_node + (node_mult * num_nodes),
-                                upper_node + (neighbor_mult * num_nodes)))
-        self.graph.remove_edges_from(to_remove)
-        self.graph.add_edges_from(to_add)
+                self.add_link_between(edge[0], edge[1], ( 0,-1), (-1,-1))
+                self.add_link_between(edge[0], edge[1], ( 0, 0), (-1, 0))
+                self.add_link_between(edge[0], edge[1], ( 0, 1), (-1, 1))
 
 
 if __name__ == "__main__":

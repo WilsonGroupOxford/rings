@@ -16,13 +16,16 @@ from matplotlib.patches import Polygon
 from matplotlib.collections import PatchCollection
 import matplotlib.pyplot as plt
 
-from .shape import Shape, node_list_to_edges
+try:
+    from .shape import Shape, node_list_to_edges
+except ImportError:
+    from shape import Shape, node_list_to_edges
 
 Node = NewType('Node', int)
 Graph = NewType('Graph', nx.Graph)
 Coord = NewType('Coord', np.array)
 Edge = NewType('Edge', FrozenSet[Tuple[Node, Node]])
-
+ID = 0
 class RingFinder:
     """
     A group of subroutines to find rings in a combination
@@ -60,7 +63,7 @@ class RingFinder:
             self.remove_long_edges()
         self.removed_nodes, self.removed_edges = self.remove_single_coordinate_sites()
         self.removable_edges = None
-
+        self.perimeter_rings = None
         # Now triangulate the graph and do the real heavy lifting.
         self.tri_graph, self.simplices = self.triangulate_graph()
         self.current_rings = {Shape(node_list_to_edges(simplex),
@@ -68,10 +71,10 @@ class RingFinder:
                               for simplex in self.simplices}
         self.identify_rings()
         # In the case of disjoint rings, there can be multiple perimeters.
+        
         if find_perimeter:
             self.perimeter_rings = self.find_perimeter_rings()
-        else:
-            self.perimeter_rings = None
+            
 
     def remove_self_edges(self):
         """
@@ -336,10 +339,22 @@ class RingFinder:
 
         # Mutate the class current_rings set, by removing
         # the two rings we just merged and adding the new one.
-        new_shape: Shape = shapes_with_edge[0].merge(shapes_with_edge[1])
+        new_shape: Shape = shapes_with_edge[0].merge(shapes_with_edge[1], edge=edge)
         for shape in shapes_with_edge:
             self.current_rings.remove(shape)
         self.current_rings.add(new_shape)
+
+    def quick_draw(self, filename):
+        fig, ax = plt.subplots()
+        nx.draw(self.graph, pos=self.coords_dict, ax=ax, node_size=5)
+        colors = ["red", "blue", "green", "orange", "pink", "brown"]
+        if self.perimeter_rings is not None:
+            for i, perimeter_ring in enumerate(self.perimeter_rings):
+                nx.draw_networkx_edges(self.graph, pos=self.coords_dict, ax=ax,
+                                       edgelist=[tuple(edge) for edge in perimeter_ring.edges],
+                                       edge_color=colors[i], width=5.0)
+        fig.savefig(filename, dpi=800)
+        plt.close(fig)
 
     def ring_sizes(self) -> Sequence[int]:
         """

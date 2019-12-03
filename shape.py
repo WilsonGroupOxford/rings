@@ -9,7 +9,8 @@ Created on Mon Nov 11 12:42:41 2019
 from typing import Dict, Sequence, NewType, Tuple, Any
 from matplotlib.patches import Polygon
 import numpy as np
-
+import networkx as nx
+import matplotlib.pyplot as plt
 Node = NewType('Node', int)
 Coord = NewType('Coord', np.array)
 
@@ -71,7 +72,8 @@ def node_list_to_edges(node_list: Sequence[Node],
 class Shape:
     def __init__(self,
                  edges: Sequence[Tuple[Node, Node]],
-                 coords_dict: Dict[Node, Coord] = None):
+                 coords_dict: Dict[Node, Coord] = None,
+                 is_self_interacting: bool = False):
         """
         Initialise the shape by describing its edges, and optionally,
         their positions. If positions are not specified, this
@@ -85,8 +87,9 @@ class Shape:
         self.edges = frozenset(edges)
         self.coords_dict = coords_dict
         self._area = None
+        self._is_self_interacting = is_self_interacting
 
-    def merge(self, other) -> None:
+    def merge(self, other, edge=None) -> None:
         """
         Merges two shapes together, removing their common edges.
         We cannot merge two shapes that believe the nodes are
@@ -94,18 +97,33 @@ class Shape:
         if self.coords_dict[node] != other.coords_dict[node]
         for a common node.
         :param other: the shape to merge in to this one.
+        :param edge: the edge to merge along. If none, we will remove all common edges, which might have some downsides!
         :return new_shape: the shape described by these
         two shapes merging together, removing the common edge
         e.g. two squares merge to form a hexagon.
         """
-        unique_edges = self.edges.symmetric_difference(other.edges)
+        if edge is None:
+            unique_edges = self.edges.symmetric_difference(other.edges)
+        else:
+            unique_edges = set(self.edges.union(other.edges))
+            unique_edges.remove(edge)
+            unique_edges = frozenset(unique_edges)
+ 
+        common_edges = self.edges.intersection(other.edges)
+        if len(common_edges) >= 2:
+            is_self_interacting = True
+        elif other._is_self_interacting or self._is_self_interacting:
+            is_self_interacting = True
+        else:
+            is_self_interacting = False
+
         common_nodes = self.nodes.intersection(other.nodes)
         for node in common_nodes:
             if not np.all(self.coords_dict[node] == other.coords_dict[node]):
                 raise ValueError("These two shapes believe that node " + 
                                  f"{node} is in two different places.")
         
-        new_shape = Shape(unique_edges, coords_dict=self.coords_dict)
+        new_shape = Shape(unique_edges, coords_dict=self.coords_dict, is_self_interacting=is_self_interacting)
         return new_shape
 
     @property
@@ -125,7 +143,7 @@ class Shape:
         a cached value if possible.
         """
         if self._area is None:
-            self.area = np.abs(calculate_polygon_area(self.node_list, self.coords_dict))
+            self.area = np.abs(calculate_polygon_area(self.to_node_list, self.coords_dict))
         return self._area
 
     def to_node_list(self):
@@ -140,25 +158,45 @@ class Shape:
         node and stepping to the next smallest numbered node.
         :return node_list: a connection ordered list of nodes.
         """
-        node_list = [min(self.nodes)]
-        seen_nodes = set(node_list)
-        while len(node_list) < len(self.edges):
-            last_node = node_list[-1]
-            # Find the two nodes this is connected to.
-            connected_nodes = set()
-            for edge in self.edges:
-                if last_node in edge:
-                    connected_nodes = connected_nodes.union(edge)
-            connected_nodes = connected_nodes.difference(seen_nodes)
-            # Pick the smallest node to move to next, arbitrarily.
-            # We'll sort out winding later.
-            if len(connected_nodes) == 0:
-                # This is a line, not a ring! Just dump all the nodes
-                # and pray.
-                return list(self.nodes)
-            next_node = min(connected_nodes)
-            node_list.append(next_node)
+     
+        if self._is_self_interacting:
+            # More generally, we can find an Eulerian path.
+            # This is hyper slow, so avoid it if at all possible.
+            # It is only necessary in the case of a self-interacting
+            # ring which shares an edge with itself.
+            # TODO: I believe all non-Eulerian cycles get split up
+            # in the ring finding process. Can that be proven?
+            ring_graph = nx.Graph()
+            ring_graph.add_edges_from(self.edges)
+            odd_nodes = [node for node in ring_graph.nodes()
+                         if len(list(ring_graph.neighbors(node))) % 2 == 1]
+            if odd_nodes:
+                start_node = min(odd_nodes)
+            else:
+                start_node = min(self.nodes)
+            euler_path = nx.algorithms.euler.eulerian_path(G=ring_graph, source=start_node)
+            node_list = [edge[0] for edge in euler_path]
+            node_list = node_list + [node_list[0]]
+        else:
+            node_list = [min(self.nodes)]
             seen_nodes = set(node_list)
+            while len(node_list) < len(self.edges):
+                last_node = node_list[-1]
+                # Find the two nodes this is connected to.
+                connected_nodes = set()
+                for edge in self.edges:
+                    if last_node in edge:
+                        connected_nodes = connected_nodes.union(edge)
+                connected_nodes = connected_nodes.difference(seen_nodes)
+                # Pick the smallest node to move to next, arbitrarily.
+                # We'll sort out winding later.
+                if len(connected_nodes) == 0:
+                    # This is a line, not a ring! Just dump all the nodes
+                    # and pray.
+                    return list(self.nodes)
+                next_node = min(connected_nodes)
+                node_list.append(next_node)
+                seen_nodes = set(node_list)
 
         if self.coords_dict is not None:
             signed_area = calculate_polygon_area(node_list, self.coords_dict)
