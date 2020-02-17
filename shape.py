@@ -6,17 +6,20 @@ Created on Mon Nov 11 12:42:41 2019
 @author: matthew-bailey
 """
 
-from typing import Dict, Sequence, NewType, Tuple, Any
-from matplotlib.patches import Polygon
-import numpy as np
-import networkx as nx
+from typing import Any, Dict, NewType, Sequence, Tuple
+
 import matplotlib.pyplot as plt
-Node = NewType('Node', int)
-Coord = NewType('Coord', np.array)
+import networkx as nx
+import numpy as np
+from matplotlib.patches import Polygon
+
+Node = NewType("Node", int)
+Coord = NewType("Coord", np.array)
 
 
-def calculate_polygon_area(node_list: Sequence[Node],
-                           coords_dict: Dict[Node, Coord]) -> float:
+def calculate_polygon_area(
+    node_list: Sequence[Node], coords_dict: Dict[Node, Coord]
+) -> float:
     """
     Calculates the signed area of this polygon,
     using the Shoelace algorithm.
@@ -33,13 +36,11 @@ def calculate_polygon_area(node_list: Sequence[Node],
         this_coord = coords_dict[node]
         next_node = node_list[(i + 1) % len(node_list)]
         next_coord = coords_dict[next_node]
-        signed_area += (this_coord[0] * next_coord[1]
-                        - this_coord[1] * next_coord[0])
+        signed_area += this_coord[0] * next_coord[1] - this_coord[1] * next_coord[0]
     return 0.5 * signed_area
 
 
-def node_list_to_edges(node_list: Sequence[Node],
-                       is_ring: bool = True):
+def node_list_to_edges(node_list: Sequence[Node], is_ring: bool = True):
     """
     Takes a list of connected nodes, such that node[i] is connected
     to node[i - 1] and node[i + 1] and turn it into a set of edges.
@@ -63,17 +64,17 @@ def node_list_to_edges(node_list: Sequence[Node],
         offset = -1
     for i in range(list_size + offset):
         next_index = (i + 1) % list_size
-        edges.add(frozenset([node_list[i],
-                             node_list[next_index]]))
+        edges.add(frozenset([node_list[i], node_list[next_index]]))
     return frozenset(edges)
 
 
-
 class Shape:
-    def __init__(self,
-                 edges: Sequence[Tuple[Node, Node]],
-                 coords_dict: Dict[Node, Coord] = None,
-                 is_self_interacting: bool = False):
+    def __init__(
+        self,
+        edges: Sequence[Tuple[Node, Node]],
+        coords_dict: Dict[Node, Coord] = None,
+        is_self_interacting: bool = False,
+    ):
         """
         Initialise the shape by describing its edges, and optionally,
         their positions. If positions are not specified, this
@@ -108,7 +109,7 @@ class Shape:
             unique_edges = set(self.edges.union(other.edges))
             unique_edges.remove(edge)
             unique_edges = frozenset(unique_edges)
- 
+
         common_edges = self.edges.intersection(other.edges)
         if len(common_edges) >= 2:
             is_self_interacting = True
@@ -120,10 +121,16 @@ class Shape:
         common_nodes = self.nodes.intersection(other.nodes)
         for node in common_nodes:
             if not np.all(self.coords_dict[node] == other.coords_dict[node]):
-                raise ValueError("These two shapes believe that node " + 
-                                 f"{node} is in two different places.")
-        
-        new_shape = Shape(unique_edges, coords_dict=self.coords_dict, is_self_interacting=is_self_interacting)
+                raise ValueError(
+                    "These two shapes believe that node "
+                    + f"{node} is in two different places."
+                )
+
+        new_shape = Shape(
+            unique_edges,
+            coords_dict=self.coords_dict,
+            is_self_interacting=is_self_interacting,
+        )
         return new_shape
 
     @property
@@ -132,8 +139,7 @@ class Shape:
         Finds a set of the unique nodes in this shape.
         :return nodes: a set of the nodes in this shape.
         """
-        nodes = {node for edge in self.edges
-                 for node in edge}
+        nodes = {node for edge in self.edges for node in edge}
         return nodes
 
     @property
@@ -143,7 +149,9 @@ class Shape:
         a cached value if possible.
         """
         if self._area is None:
-            self.area = np.abs(calculate_polygon_area(self.to_node_list, self.coords_dict))
+            self.area = np.abs(
+                calculate_polygon_area(self.to_node_list, self.coords_dict)
+            )
         return self._area
 
     def to_node_list(self):
@@ -158,7 +166,7 @@ class Shape:
         node and stepping to the next smallest numbered node.
         :return node_list: a connection ordered list of nodes.
         """
-     
+
         if self._is_self_interacting:
             # More generally, we can find an Eulerian path.
             # This is hyper slow, so avoid it if at all possible.
@@ -168,13 +176,18 @@ class Shape:
             # in the ring finding process. Can that be proven?
             ring_graph = nx.Graph()
             ring_graph.add_edges_from(self.edges)
-            odd_nodes = [node for node in ring_graph.nodes()
-                         if len(list(ring_graph.neighbors(node))) % 2 == 1]
+            odd_nodes = [
+                node
+                for node in ring_graph.nodes()
+                if len(list(ring_graph.neighbors(node))) % 2 == 1
+            ]
             if odd_nodes:
                 start_node = min(odd_nodes)
             else:
                 start_node = min(self.nodes)
-            euler_path = nx.algorithms.euler.eulerian_path(G=ring_graph, source=start_node)
+            euler_path = nx.algorithms.euler.eulerian_path(
+                G=ring_graph, source=start_node
+            )
             node_list = [edge[0] for edge in euler_path]
             node_list = node_list + [node_list[0]]
         else:
@@ -215,8 +228,10 @@ class Shape:
         :return polygon: a matplotlib polygon object for plotting.
         """
         if self.coords_dict is None:
-            raise ValueError("self.coords_array is None, so we cannot " +
-                             "construct a matplotlib polygon.")
+            raise ValueError(
+                "self.coords_array is None, so we cannot "
+                + "construct a matplotlib polygon."
+            )
         node_list = self.to_node_list()
         coord_array = np.empty([len(node_list), 2], dtype=float)
         for i, node in enumerate(node_list):
@@ -261,10 +276,11 @@ class Shape:
         """
         return len(self.edges)
 
+
 class Line(Shape):
-    def __init__(self,
-                 edges: Sequence[Tuple[Node, Node]],
-                 coords_dict: Dict[Node, Coord] = None):
+    def __init__(
+        self, edges: Sequence[Tuple[Node, Node]], coords_dict: Dict[Node, Coord] = None
+    ):
         super().__init__(self, edges, coords_dict)
 
     @property

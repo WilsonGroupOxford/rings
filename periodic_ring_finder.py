@@ -8,15 +8,16 @@ Created on Mon Nov 11 13:32:13 2019
 
 import copy
 from collections import Counter, defaultdict
+from typing import Any, Dict, NewType, Sequence, Tuple
 
-from typing import Dict, Sequence, NewType, Tuple, Any
-from matplotlib.patches import Polygon
-import numpy as np
-import networkx as nx
-from scipy.spatial import Delaunay
-from matplotlib.collections import PatchCollection
 import matplotlib.pyplot as plt
+import networkx as nx
+import numpy as np
 import PIL
+from matplotlib.collections import PatchCollection
+from matplotlib.patches import Polygon
+from scipy.spatial import Delaunay
+
 try:
     from .ring_finder import RingFinder
     from .shape import Shape, node_list_to_edges
@@ -24,16 +25,13 @@ except ImportError:
     from ring_finder import RingFinder
     from shape import Shape, node_list_to_edges
 
-Node = NewType('Node', int)
-Graph = NewType('Graph', nx.Graph)
-Coord = NewType('Coord', np.array)
+Node = NewType("Node", int)
+Graph = NewType("Graph", nx.Graph)
+Coord = NewType("Coord", np.array)
+
 
 class PeriodicRingFinder(RingFinder):
-
-    def __init__(self,
-                 graph: Graph,
-                 coords_dict: Dict[Node, Coord],
-                 cell=None):
+    def __init__(self, graph: Graph, coords_dict: Dict[Node, Coord], cell=None):
         self.graph: Graph = copy.deepcopy(graph)
 
         periodic_graph = copy.deepcopy(graph)
@@ -44,10 +42,12 @@ class PeriodicRingFinder(RingFinder):
         self.original_nodes = {key for key in self.coords_dict.keys()}
         self.perimeter_rings = None
         # First, do the aperiodic computation.
-        super().__init__(graph=self.graph,
-                         coords_dict=self.coords_dict,
-                         cutoffs=cell/2.0,
-                         find_perimeter=True)
+        super().__init__(
+            graph=self.graph,
+            coords_dict=self.coords_dict,
+            cutoffs=cell / 2.0,
+            find_perimeter=True,
+        )
         self.aperiodic_graph = self.graph
         self.graph = periodic_graph
         self.coords_dict = periodic_coords
@@ -60,9 +60,10 @@ class PeriodicRingFinder(RingFinder):
         self.removable_edges = None
         # Now triangulate the graph and do the real heavy lifting.
         self.tri_graph, self.simplices = self.triangulate_graph()
-        self.current_rings = {Shape(node_list_to_edges(simplex),
-                                    self.coords_dict)
-                              for simplex in self.simplices}
+        self.current_rings = {
+            Shape(node_list_to_edges(simplex), self.coords_dict)
+            for simplex in self.simplices
+        }
 
         self.identify_rings()
         self.current_rings = self.find_unique_rings()
@@ -101,12 +102,10 @@ class PeriodicRingFinder(RingFinder):
             copy_rings = list(copy_rings)
             num_shared_edges = []
             num_shared_nodes = []
-            nodes_unique = {item for edge in unique_ring.edges
-                            for item in edge}
+            nodes_unique = {item for edge in unique_ring.edges for item in edge}
             for copy_ring in copy_rings:
                 shared_edges = unique_ring.edges.intersection(copy_ring.edges)
-                nodes_copy = {item for edge in copy_ring.edges
-                              for item in edge}
+                nodes_copy = {item for edge in copy_ring.edges for item in edge}
                 shared_nodes = nodes_unique.intersection(nodes_copy)
 
                 num_shared_edges.append(len(shared_edges))
@@ -139,21 +138,31 @@ class PeriodicRingFinder(RingFinder):
         # the central nodes. The rest can be in any order as we
         # look them up later.
         num_nodes = len(self.original_nodes)
-        cell_offsets = [(0, 0), (1, 1), (1, 0), (1, -1),
-                        (0, 1), (0, -1),
-                        (-1, 1), (-1, 0), (-1, -1)]
+        cell_offsets = [
+            (0, 0),
+            (1, 1),
+            (1, 0),
+            (1, -1),
+            (0, 1),
+            (0, -1),
+            (-1, 1),
+            (-1, 0),
+            (-1, -1),
+        ]
         assert image_a in cell_offsets, f"{image_a} not in {cell_offsets}"
         assert image_b in cell_offsets, f"{image_b} not in {cell_offsets}"
-        assert 0 <= node_a and node_a <= num_nodes, f"{node_a} must be a non-image index (0 <= node_a <= {num_nodes})"
-        assert 0 <= node_b and node_b <= num_nodes, f"{node_b} must be a non-image index (0 <= node_b <= {num_nodes})"
+        assert (
+            0 <= node_a and node_a <= num_nodes
+        ), f"{node_a} must be a non-image index (0 <= node_a <= {num_nodes})"
+        assert (
+            0 <= node_b and node_b <= num_nodes
+        ), f"{node_b} must be a non-image index (0 <= node_b <= {num_nodes})"
 
         image_a_offset = num_nodes * cell_offsets.index(image_a)
         image_b_offset = num_nodes * cell_offsets.index(image_b)
-        self.graph.add_edge(node_a  + image_a_offset, 
-                            node_b + image_b_offset)
-        self.graph.add_edge(node_a  + image_b_offset, 
-                            node_b + image_a_offset)
-        
+        self.graph.add_edge(node_a + image_a_offset, node_b + image_b_offset)
+        self.graph.add_edge(node_a + image_b_offset, node_b + image_a_offset)
+
     def add_periodic_images(self):
         """
         Remove any edges that are longer than
@@ -173,9 +182,17 @@ class PeriodicRingFinder(RingFinder):
         """
         periodic_coords_dict = dict()
         num_nodes = len(self.coords_dict)
-        cell_offsets = [(0, 0), (1, 1), (1, 0), (1, -1),
-                        (0, 1), (0, -1),
-                        (-1, 1), (-1, 0), (-1, -1)]
+        cell_offsets = [
+            (0, 0),
+            (1, 1),
+            (1, 0),
+            (1, -1),
+            (0, 1),
+            (0, -1),
+            (-1, 1),
+            (-1, 0),
+            (-1, -1),
+        ]
 
         to_add = set()
         perimeter_nodes = set()
@@ -184,8 +201,9 @@ class PeriodicRingFinder(RingFinder):
         perimeter_nodes.update(self.removed_nodes)
         edge_images = set()
         for node in perimeter_nodes:
-            edge_images.update(frozenset([node, item])
-                               for item in set(self.graph.neighbors(node)))
+            edge_images.update(
+                frozenset([node, item]) for item in set(self.graph.neighbors(node))
+            )
 
         for edge_a, edge_b in edge_images:
             a_pos = self.coords_dict[edge_a]
@@ -218,14 +236,18 @@ class PeriodicRingFinder(RingFinder):
 
         edge_images = set()
         for node in perimeter_nodes:
-            edge_images.update(frozenset([node, item])
-                               for item in set(self.graph.neighbors(node)))
+            edge_images.update(
+                frozenset([node, item]) for item in set(self.graph.neighbors(node))
+            )
         handled_nodes = set(self.aperiodic_graph.nodes())
-        handled_nodes = handled_nodes.difference(perimeter_nodes)     
-        num_nodes = len(self.original_nodes) 
+        handled_nodes = handled_nodes.difference(perimeter_nodes)
+        num_nodes = len(self.original_nodes)
         for edge in edge_images:
             edge = tuple(edge)
-            if edge[0] % num_nodes in handled_nodes and edge[1] % num_nodes in handled_nodes:
+            if (
+                edge[0] % num_nodes in handled_nodes
+                and edge[1] % num_nodes in handled_nodes
+            ):
                 continue
             pos_a = self.coords_dict[edge[0]]
             pos_b = self.coords_dict[edge[1]]
@@ -234,38 +256,38 @@ class PeriodicRingFinder(RingFinder):
                 if np.all(pos_a < pos_b) or np.all(pos_a > pos_b):
                     # This is a bottom-left top-right link. Add in a
                     # link from (0, 0) to (1, 1) and (0, 0) to (-1, -1).
-                    self.add_link_between(edge[0], edge[1], ( 0, 0), ( 1, 1))
-                    self.add_link_between(edge[0], edge[1], ( 0, 0), (-1,-1))
-                    self.add_link_between(edge[0], edge[1], (-1, 0), ( 0, 1))
-                    self.add_link_between(edge[0], edge[1], ( 0,-1), ( 1, 0))
+                    self.add_link_between(edge[0], edge[1], (0, 0), (1, 1))
+                    self.add_link_between(edge[0], edge[1], (0, 0), (-1, -1))
+                    self.add_link_between(edge[0], edge[1], (-1, 0), (0, 1))
+                    self.add_link_between(edge[0], edge[1], (0, -1), (1, 0))
                 else:
                     # This is a top-left bottom-right link. Add in a
                     # link from (0, 0) to (-1, 1) and (0, 0) to (-1, 1).
                     self.add_link_between(edge[0], edge[1], (0, 0), (-1, 1))
-                    self.add_link_between(edge[0], edge[1], (0, 0), ( 1,-1))
-                    self.add_link_between(edge[0], edge[1], (1, 0), ( 0, 1))
-                    self.add_link_between(edge[0], edge[1], (0,-1), (-1, 0))
+                    self.add_link_between(edge[0], edge[1], (0, 0), (1, -1))
+                    self.add_link_between(edge[0], edge[1], (1, 0), (0, 1))
+                    self.add_link_between(edge[0], edge[1], (0, -1), (-1, 0))
             elif distance[1] > self.cutoffs[1]:
                 # There is an edge that spans the y-coordinate.
                 # Remove it, and add in the six new edges
                 self.add_link_between(edge[0], edge[1], (-1, 0), (-1, -1))
-                self.add_link_between(edge[0], edge[1], ( 0, 0), ( 0, -1))
-                self.add_link_between(edge[0], edge[1], ( 1, 0), ( 1, -1))
+                self.add_link_between(edge[0], edge[1], (0, 0), (0, -1))
+                self.add_link_between(edge[0], edge[1], (1, 0), (1, -1))
 
                 self.add_link_between(edge[0], edge[1], (-1, 1), (-1, 0))
-                self.add_link_between(edge[0], edge[1], ( 0, 1), ( 0, 0))
-                self.add_link_between(edge[0], edge[1], ( 1, 1), ( 1, 0))
+                self.add_link_between(edge[0], edge[1], (0, 1), (0, 0))
+                self.add_link_between(edge[0], edge[1], (1, 1), (1, 0))
 
             elif distance[0] > self.cutoffs[0]:
                 # There is an edge that spans the x-coordinate.
                 # Remove it, and add in the six new edges.
-                self.add_link_between(edge[0], edge[1], ( 1,-1), ( 0,-1))
-                self.add_link_between(edge[0], edge[1], ( 1, 0), ( 0, 0))
-                self.add_link_between(edge[0], edge[1], ( 1, 1), ( 0, 1))
+                self.add_link_between(edge[0], edge[1], (1, -1), (0, -1))
+                self.add_link_between(edge[0], edge[1], (1, 0), (0, 0))
+                self.add_link_between(edge[0], edge[1], (1, 1), (0, 1))
 
-                self.add_link_between(edge[0], edge[1], ( 0,-1), (-1,-1))
-                self.add_link_between(edge[0], edge[1], ( 0, 0), (-1, 0))
-                self.add_link_between(edge[0], edge[1], ( 0, 1), (-1, 1))
+                self.add_link_between(edge[0], edge[1], (0, -1), (-1, -1))
+                self.add_link_between(edge[0], edge[1], (0, 0), (-1, 0))
+                self.add_link_between(edge[0], edge[1], (0, 1), (-1, 1))
 
 
 if __name__ == "__main__":
@@ -285,12 +307,13 @@ if __name__ == "__main__":
             COORDS_DICT[node_id] = np.array([x, y])
     XS = [item[0] for item in COORDS_DICT.values()]
     YS = [item[1] for item in COORDS_DICT.values()]
-    ring_finder = PeriodicRingFinder(G, COORDS_DICT, np.array([max(XS) - min(XS),
-                                                               max(YS) - min(YS)]))
+    ring_finder = PeriodicRingFinder(
+        G, COORDS_DICT, np.array([max(XS) - min(XS), max(YS) - min(YS)])
+    )
 
     FIG, AX = plt.subplots()
     FIG.patch.set_visible(False)
-    AX.axis('off')
+    AX.axis("off")
     ring_finder.draw_onto(AX)
     AX.set_xlim(-95, 180)
     AX.set_ylim(-95, 180)
