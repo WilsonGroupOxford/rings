@@ -148,7 +148,6 @@ class RingFinder:
             pos_a = self.coords_dict[edge[0]]
             pos_b = self.coords_dict[edge[1]]
             distance = np.abs(pos_b - pos_a)
-
             if distance[0] > self.cutoffs[0]:
                 to_remove.add(edge)
             elif distance[1] > self.cutoffs[1]:
@@ -392,16 +391,36 @@ class RingFinder:
         """
         return [ring.to_polygon() for ring in self.current_rings]
 
-    def draw_onto(self, ax, cmap_name: str = "viridis", **kwargs) -> None:
+    def draw_onto(self, ax, cmap_name: str = "viridis", min_ring_size=None, max_ring_size=None, **kwargs) -> None:
         """
         Draws the coloured polygons onto a matplotlib
         axis.
         """
+        # Calculate the bounding boxes
+        mins = np.array([np.inf, np.inf])
+        maxes = np.array([-np.inf, -np.inf])
+        for ring in self.current_rings:
+            ring_bounding = ring.bounding_box()
+            mins = np.minimum(mins, ring_bounding[:, 0])
+            maxes = np.maximum(maxes, ring_bounding[:, 1])
+
+        ax.set_xlim(mins[0], maxes[0])
+        ax.set_ylim(mins[1], maxes[1])
         polys = self.as_polygons()
         sizes = self.ring_sizes()
-        size_range = max(sizes) + 1 - min(sizes)
+
+        # Sometimes we don't get the ring sizes right. The user can provide
+        # a lower bound on the maximum ring size and an upper bound on the
+        # minimum ring size for more consistent colouring.
+        if max_ring_size is None:
+            max_ring_size = max(sizes)
+        max_ring_size = max(max_ring_size, max(sizes))
+        if min_ring_size is None:
+            min_ring_size = min(sizes)
+        min_ring_size = min(min_ring_size, min(sizes))
+        size_range = max_ring_size + 1 - min_ring_size
         this_cmap = plt.cm.get_cmap(cmap_name)(np.linspace(0, 1, size_range))
-        colours = [this_cmap[size - min(sizes)] for size in sizes]
+        colours = [this_cmap[size - min_ring_size] for size in sizes]
 
         p = PatchCollection(polys, linewidth=2.0)
         p.set_color(colours)
@@ -432,6 +451,35 @@ class RingFinder:
             node_color="black",
             node_size=2.5,
         )
+
+    def analyse_edges(self):
+        """
+        Return a list of all of the edge lengths in the graph.
+
+        """
+        edge_lengths = []
+        for u, v in self.graph.edges:
+            gradient = self.coords_dict[v] - self.coords_dict[u]
+        
+            # If we're in a periodic box, we have to apply the
+            # minimum image convention. Do this by creating
+            # a virtual position for v, which is a box length away.
+            # We need the += and -= to cope with cases where we're out in
+            # both x and y.
+            new_pos_v = self.coords_dict[v]
+            if gradient[0] > self.cutoffs[0]:
+                new_pos_v -= np.array([2 * self.cutoffs[0], 0.0])
+            elif gradient[0] < -self.cutoffs[0]:
+                new_pos_v += np.array([2 * self.cutoffs[0], 0.0])
+
+            if gradient[1] > self.cutoffs[1]:
+               new_pos_v -= np.array([0, 2 * self.cutoffs[1]])
+            elif gradient[1] < -self.cutoffs[1]:
+                new_pos_v += np.array([0, 2 * self.cutoffs[1]])
+            new_gradient = new_pos_v - self.coords_dict[u]
+            edge_lengths.append(np.hypot(*new_gradient))
+        return edge_lengths
+
 
 
 if __name__ == "__main__":

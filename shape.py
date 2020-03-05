@@ -11,6 +11,7 @@ from typing import Any, Dict, NewType, Sequence, Tuple
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
+from collections import deque
 from matplotlib.patches import Polygon
 
 Node = NewType("Node", int)
@@ -90,6 +91,20 @@ class Shape:
         self._area = None
         self._is_self_interacting = is_self_interacting
 
+    def bounding_box(self) -> np.array:
+        """
+        Calculate the minimum bounding box for this polygon.
+
+        :return bounding_box: a rectangle of coordinates[[min_x, max_x], [min_y, max_y]] that contains the shape
+        """
+        mins = np.array([np.inf, np.inf])
+        maxes = np.array([-np.inf, -np.inf])
+        for node in self.nodes:
+            node_pos = self.coords_dict[node]
+            mins = np.minimum(mins, node_pos)
+            maxes = np.maximum(maxes, node_pos)
+        return np.vstack([mins, maxes]).T
+
     def merge(self, other, edge=None) -> None:
         """
         Merges two shapes together, removing their common edges.
@@ -149,10 +164,137 @@ class Shape:
         a cached value if possible.
         """
         if self._area is None:
-            self.area = np.abs(
-                calculate_polygon_area(self.to_node_list, self.coords_dict)
+            self._area = np.abs(
+                calculate_polygon_area(self.to_node_list(), self.coords_dict)
             )
         return self._area
+
+    def centroid(self):
+        """
+        Returns the position of the centre-of-mass of the polygon.
+        """
+        nodes = self.to_node_list()
+        centroid = np.array([0.0, 0.0])
+        for i, node in enumerate(nodes):
+            next_node = nodes[(i+1) % len(nodes)]
+            cross_term = self.coords_dict[node][0] * self.coords_dict[next_node][1] - self.coords_dict[next_node][0] * self.coords_dict[node][1]
+            centroid[0] += (self.coords_dict[node][0] + self.coords_dict[next_node][0]) * cross_term
+            centroid[1] += (self.coords_dict[node][1] + self.coords_dict[next_node][1]) * cross_term
+        centroid /= 6 * self.area
+        return centroid
+
+    def _eulerian_node_list(self, ring_graph):
+        """
+        Calculate the node list using an Eulerian path method.
+
+        This is slower than doing it the fast way, but a bit more
+        reliable in the case of singly-self interacting rings.
+        Returns
+        -------
+        None.
+
+        """
+        # More generally, we can find an Eulerian path.
+        # This is hyper slow, so avoid it if at all possible.
+        # It is only necessary in the case of a self-interacting
+        # ring which shares an edge with itself.
+        odd_nodes = [
+            node
+            for node in ring_graph.nodes()
+            if len(list(ring_graph.neighbors(node))) % 2 == 1
+        ]
+        if odd_nodes:
+            start_node = min(odd_nodes)
+        else:
+            start_node = min(self.nodes)
+        euler_path = nx.algorithms.euler.eulerian_path(
+            G=ring_graph, source=start_node
+        )
+        node_list = [edge[0] for edge in euler_path]
+        node_list = node_list + [node_list[0]]
+        return node_list
+
+    def _bridges_node_list(self, ring_graph):
+        """
+        Calculate the node list using a bridge splitting method.
+
+        This is useful for graphs with enclosures or exclaves,
+        and can deal with them generally but it is very slow.
+
+        """
+        bridges = list(nx.bridges(ring_graph))
+        ring_graph.remove_edges_from(bridges)
+
+        # Now split the ring graph up into its connected components.
+        # Then, turn each of them into a shape and repeat this
+        # sorry process.
+        node_list = []
+        components_to_visit = list(nx.connected_components(ring_graph))
+        components_to_visit.sort(key=len, reverse=False)
+        while components_to_visit:
+            component = components_to_visit.pop()
+            if len(component) == 1:
+                # This is a loose node.
+                # Pop it and go about our merry way.
+                continue
+            edges_in_component = set(edge for edge in self.edges
+                                     if list(edge)[0] in component and list(edge)[1] in component)
+            # Do we need to pass on is_self_interacting? Its's slower to do so
+            # because we have to find the Eulerian path, but probably safer.
+            this_sub_ring = Shape(edges_in_component, self.coords_dict, is_self_interacting=False)
+            sub_ring_node_list = this_sub_ring.to_node_list()
+            # We've only found one component, so make that the base of our node list.
+            if not node_list:
+                node_list = sub_ring_node_list
+                continue
+            else:
+                # Find the bridges connecting this connected component to the rest of
+                # the graph. There can be many, so follow each of them to their ends.
+                added_bridge = False
+                for bridge in bridges:
+                    bridge_path = []
+                    seen_nodes = set()
+                    if bridge[0] in sub_ring_node_list:
+                        bridge_path = [bridge[0], bridge[1]]
+                    elif bridge[1] in sub_ring_node_list:
+                        bridge_path = [bridge[1], bridge[0]]
+                    else:
+                        # We're not connected to this bridge.
+                        # Carry on merrily.
+                        continue
+
+                    seen_nodes.update(bridge)
+                    while True:
+                        path_updated = False
+                        for other_bridge in bridges:
+                            if bridge_path[-1] == other_bridge[0] and other_bridge[1] not in seen_nodes:
+                                bridge_path.append(other_bridge[1])
+                                seen_nodes.update(other_bridge)
+                                path_updated = True
+                            elif bridge_path[-1] == other_bridge[1] and other_bridge[0] not in seen_nodes:
+                                bridge_path.append(other_bridge[0])
+                                seen_nodes.update(other_bridge)
+                                path_updated = True
+                        if not path_updated:
+                            # We've completed this path
+                            break
+                    # Rotate our node list to start at bridge_path[0]
+                    rotation_index = sub_ring_node_list.index(bridge_path[0])
+                    sub_ring_node_list = deque(sub_ring_node_list)
+                    sub_ring_node_list.rotate(-rotation_index)
+                    sub_ring_node_list = list(sub_ring_node_list)
+                    # Check this bridge ends in the current connected component
+                    if bridge_path[-1] in node_list:
+                        insertion_pos = node_list.index(bridge_path[-1])
+                        bridging_node_list = bridge_path[::-1] + sub_ring_node_list[1:] + bridge_path[:-1]
+                        node_list = node_list[:insertion_pos] + bridging_node_list + node_list[insertion_pos:]
+                        added_bridge = True
+                        break
+                if not added_bridge:
+                    # We didn't succesfully bridge this. Add it
+                    # back to the pile and carry on.
+                    components_to_visit.insert(0, component)
+        return node_list
 
     def to_node_list(self):
         """
@@ -168,28 +310,21 @@ class Shape:
         """
 
         if self._is_self_interacting:
-            # More generally, we can find an Eulerian path.
-            # This is hyper slow, so avoid it if at all possible.
-            # It is only necessary in the case of a self-interacting
-            # ring which shares an edge with itself.
-            # TODO: I believe all non-Eulerian cycles get split up
-            # in the ring finding process. Can that be proven?
+
             ring_graph = nx.Graph()
             ring_graph.add_edges_from(self.edges)
-            odd_nodes = [
-                node
-                for node in ring_graph.nodes()
-                if len(list(ring_graph.neighbors(node))) % 2 == 1
-            ]
-            if odd_nodes:
-                start_node = min(odd_nodes)
-            else:
-                start_node = min(self.nodes)
-            euler_path = nx.algorithms.euler.eulerian_path(
-                G=ring_graph, source=start_node
-            )
-            node_list = [edge[0] for edge in euler_path]
-            node_list = node_list + [node_list[0]]
+
+            if nx.is_eulerian(ring_graph):
+                # More generally, we can find an Eulerian path.
+                # This is hyper slow, so avoid it if at all possible.
+                # It is only necessary in the case of a self-interacting
+                # ring which shares an edge with itself.
+                node_list = self._eulerian_node_list(ring_graph)
+            elif nx.has_bridges(ring_graph):
+                # Except in hyper-pathological cases, where a ring is doubly
+                # self interacting or has exclaves / enclaves. In this case,
+                # we can identify bridges as being the edges to these exclaves.
+                node_list = self._bridges_node_list(ring_graph)
         else:
             node_list = [min(self.nodes)]
             seen_nodes = set(node_list)
@@ -201,12 +336,15 @@ class Shape:
                     if last_node in edge:
                         connected_nodes = connected_nodes.union(edge)
                 connected_nodes = connected_nodes.difference(seen_nodes)
+                if len(connected_nodes) == 0:
+                    # Our self-interacting detection heuristics have failed.
+                    # We've tried to do it the fast way, but we can't.
+                    # Restart this process and do it the slow way.
+                    self._is_self_interacting = True
+                    return self.to_node_list()
+
                 # Pick the smallest node to move to next, arbitrarily.
                 # We'll sort out winding later.
-                if len(connected_nodes) == 0:
-                    # This is a line, not a ring! Just dump all the nodes
-                    # and pray.
-                    return list(self.nodes)
                 next_node = min(connected_nodes)
                 node_list.append(next_node)
                 seen_nodes = set(node_list)
@@ -224,7 +362,7 @@ class Shape:
 
     def to_polygon(self):
         """
-        Turns this shape into a matplotlib polygon object.
+        Turn this shape into a matplotlib polygon object.
         :return polygon: a matplotlib polygon object for plotting.
         """
         if self.coords_dict is None:
@@ -286,3 +424,5 @@ class Line(Shape):
     @property
     def area(self):
         raise AttributeError("Lines do not meaningfully have an area")
+
+

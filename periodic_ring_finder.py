@@ -13,7 +13,7 @@ from typing import Any, Dict, NewType, Sequence, Tuple
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
-import PIL
+
 from matplotlib.collections import PatchCollection
 from matplotlib.patches import Polygon
 from scipy.spatial import Delaunay
@@ -38,7 +38,7 @@ class PeriodicRingFinder(RingFinder):
         periodic_coords = copy.deepcopy(coords_dict)
         self.cell = cell
         self.cutoffs = cell / 2.0
-        self.coords_dict: Dict[Node, Coord] = coords_dict
+        self.coords_dict: Dict[Node, Coord] = copy.deepcopy(coords_dict)
         self.original_nodes = {key for key in self.coords_dict.keys()}
         self.perimeter_rings = None
         # First, do the aperiodic computation.
