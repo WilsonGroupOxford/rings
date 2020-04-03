@@ -25,15 +25,16 @@ except ImportError:
     from ring_finder import RingFinder
     from shape import Shape, node_list_to_edges
 
+
 Node = NewType("Node", int)
 Graph = NewType("Graph", nx.Graph)
 Coord = NewType("Coord", np.array)
 
 
 class PeriodicRingFinder(RingFinder):
-    def __init__(self, graph: Graph, coords_dict: Dict[Node, Coord], cell=None):
+    def __init__(self, graph: Graph, coords_dict: Dict[Node, Coord], cell=None, missing_policy="add"):
         self.graph: Graph = copy.deepcopy(graph)
-
+        self.missing_policy = missing_policy
         periodic_graph = copy.deepcopy(graph)
         periodic_coords = copy.deepcopy(coords_dict)
         self.cell = cell
@@ -47,6 +48,7 @@ class PeriodicRingFinder(RingFinder):
             coords_dict=self.coords_dict,
             cutoffs=cell / 2.0,
             find_perimeter=True,
+            missing_policy=self.missing_policy,
         )
         self.aperiodic_graph = self.graph
         self.graph = periodic_graph
@@ -67,6 +69,73 @@ class PeriodicRingFinder(RingFinder):
 
         self.identify_rings()
         self.current_rings = self.find_unique_rings()
+
+    def add_ring_images(self, original_coords):
+        cell_offsets = [
+            (0, 0),
+            (1, 1),
+            (1, 0),
+            (1, -1),
+            (0, 1),
+            (0, -1),
+            (-1, 1),
+            (-1, 0),
+            (-1, -1),
+        ]
+
+        def _edge_is_too_long(_u_of_edge, _v_of_edge):
+            distance = np.abs(self.coords_dict[_u_of_edge] - self.coords_dict[_v_of_edge])
+            return np.any(distance > self.cutoffs)
+        rings_to_remove = set()
+        rings_to_add = set()
+        edges_to_remove = set()
+        edges_to_add = set()
+        num_nodes = len(self.original_nodes)
+        for ring in self.current_rings:
+            rings_to_remove.add(ring)
+            node_list = ring.to_node_list()
+            edges_to_remove.update(ring.edges)
+            iters = 0
+            while True:
+                unchanged = True
+                for i in range(2*len(node_list)):
+                    u_of_edge = node_list[i % len(node_list)]
+                    v_of_edge = node_list[(i + 1) % len(node_list)]
+                    if u_of_edge not in self.coords_dict:
+                        original_u = u_of_edge % num_nodes
+                        u_cell_offset = u_of_edge // num_nodes
+                        self.coords_dict[u_of_edge] = original_coords[original_u] + (np.array(cell_offsets[u_cell_offset]) * 2 * self.cutoffs)
+
+                    if v_of_edge not in self.coords_dict:
+                        original_v = v_of_edge % num_nodes
+                        v_cell_offset = v_of_edge // num_nodes
+                        self.coords_dict[v_of_edge] = original_coords[original_v] + (np.array(cell_offsets[v_cell_offset]) * 2 * self.cutoffs)
+
+                    if _edge_is_too_long(u_of_edge, v_of_edge):
+                        option_v_poses = [self.coords_dict[v_of_edge] + (np.array(cell_offsets[j]) * 2 * self.cutoffs) for j in range(9)]
+                        distances = [np.abs(self.coords_dict[u_of_edge] - option_v_pos) for option_v_pos in option_v_poses]
+                        hypot_distances = [np.hypot(*distance) for distance in distances]
+                        min_arg = np.argmin(hypot_distances)
+                        new_v = v_of_edge + (min_arg * num_nodes)
+                        self.coords_dict[new_v] = option_v_poses[min_arg]
+                        node_list[(i + 1) % len(node_list)] = new_v
+                        if new_v != v_of_edge:
+                            unchanged = False
+                if unchanged:
+                    break
+                iters += 1
+                if iters > 10:
+                    print("Could not find a periodic walk around" + str([tuple(item) for item in ring.edges]))
+                    break
+            new_edges = node_list_to_edges(node_list, is_ring=True)
+            new_ring = Shape(node_list_to_edges(node_list, is_ring=True), self.coords_dict, ring._is_self_interacting)
+            edges_to_add.update(new_ring.edges)
+            rings_to_add.add(new_ring)
+        self.current_rings = self.current_rings - rings_to_remove
+        self.current_rings.update(rings_to_add)
+        self.graph.remove_edges_from([tuple(item) for item in edges_to_remove])
+        self.graph.add_edges_from([tuple(item) for item in edges_to_add])
+        return self.current_rings
 
     def find_unique_rings(self):
         """
@@ -202,10 +271,9 @@ class PeriodicRingFinder(RingFinder):
         edge_images = set()
         for node in perimeter_nodes:
             edge_images.update(
-                frozenset([node, item]) for item in set(self.graph.neighbors(node))
+                frozenset([node, item]) for item in set(self.graph.neighbors(node)) if node != item
             )
-
-        for edge_a, edge_b in edge_images:
+        for edge_a, edge_b  in edge_images:
             a_pos = self.coords_dict[edge_a]
             b_pos = self.coords_dict[edge_b]
             for i, cell_offset in enumerate(cell_offsets):
@@ -217,7 +285,6 @@ class PeriodicRingFinder(RingFinder):
                 periodic_coords_dict[new_edge_a] = new_a_pos
                 periodic_coords_dict[new_edge_b] = new_b_pos
                 to_add.add((new_edge_a, new_edge_b))
-
         self.graph.add_edges_from(to_add)
         self.coords_dict.update(periodic_coords_dict)
 

@@ -13,6 +13,7 @@ import networkx as nx
 import numpy as np
 from collections import deque
 from matplotlib.patches import Polygon
+import copy
 
 Node = NewType("Node", int)
 Coord = NewType("Coord", np.array)
@@ -65,7 +66,8 @@ def node_list_to_edges(node_list: Sequence[Node], is_ring: bool = True):
         offset = -1
     for i in range(list_size + offset):
         next_index = (i + 1) % list_size
-        edges.add(frozenset([node_list[i], node_list[next_index]]))
+        if node_list[i] != node_list[next_index]:
+            edges.add(frozenset([node_list[i], node_list[next_index]]))
     return frozenset(edges)
 
 
@@ -86,7 +88,7 @@ class Shape:
         nodes and returning coordinates, which helps calculate
         area and winding order.
         """
-        self.edges = frozenset(edges)
+        self.edges = frozenset(copy.deepcopy(edges))
         self.coords_dict = coords_dict
         self._area = None
         self._is_self_interacting = is_self_interacting
@@ -213,6 +215,11 @@ class Shape:
         node_list = [edge[0] for edge in euler_path]
         node_list = node_list + [node_list[0]]
         return node_list
+
+    def shared_edges(self, other_shape, num_nodes):
+        self_modulo_edges = set(frozenset([tuple(edge)[0]% num_nodes, (tuple(edge)[1] % num_nodes)]) for edge in self.edges)
+        other_modulo_edges = set(frozenset([tuple(edge)[0]% num_nodes, (tuple(edge)[1] % num_nodes)]) for edge in other_shape.edges)
+        return len(self_modulo_edges.intersection(other_modulo_edges))
 
     def _bridges_node_list(self, ring_graph):
         """
@@ -357,7 +364,7 @@ class Shape:
                 # is wrong. That's easily fixed by reversing the list,
                 # and then putting the smallest element at the front.
                 node_list = list(reversed(node_list))
-                node_list = node_list[-1:] + node_list[:-1]
+                # node_list = node_list[-1:] + node_list[:-1]
         return node_list
 
     def to_polygon(self):

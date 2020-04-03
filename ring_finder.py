@@ -6,15 +6,16 @@ Created on Thu Nov  7 16:45:06 2019
 @author: matthew-bailey
 """
 
-from collections import Counter
+from collections import Counter, defaultdict
 from typing import Dict, FrozenSet, NewType, Sequence, Set, Tuple
-
+import copy 
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 from matplotlib.collections import PatchCollection
 from matplotlib.patches import Polygon
 from scipy.spatial import Delaunay
+
 
 try:
     from .shape import Shape, node_list_to_edges
@@ -27,6 +28,12 @@ Coord = NewType("Coord", np.array)
 Edge = NewType("Edge", FrozenSet[Tuple[Node, Node]])
 ID = 0
 
+class RingFinderError(Exception):
+    """
+    Exception to represent a failure to find any rings.
+    """
+    def __init__(self, message):
+        super().__init__(message)
 
 class RingFinder:
     """
@@ -45,6 +52,7 @@ class RingFinder:
         coords_dict: Dict[Node, Coord],
         cutoffs: np.array = None,
         find_perimeter: bool = True,
+        missing_policy="add"
     ):
         """
         Initialise and locate the rings in a provided graph.
@@ -59,7 +67,8 @@ class RingFinder:
         """
         self.graph: Graph = graph
         self.remove_self_edges()
-        self.coords_dict: Dict[Node, Coord] = coords_dict
+        self.coords_dict: Dict[Node, Coord] = copy.deepcopy(coords_dict)
+        self.missing_policy = missing_policy
 
         # Tidying up stage -- remove the long edges,
         # and remove the single coordinate sites.
@@ -129,6 +138,7 @@ class RingFinder:
             coords_dict=perimeter_coords,
             cutoffs=None,
             find_perimeter=False,
+            missing_policy=self.missing_policy
         )
         if zero_use_edges:
             edge_rings = sub_ring_finder.current_rings.union({Shape(zero_use_edges)})
@@ -148,9 +158,8 @@ class RingFinder:
             pos_a = self.coords_dict[edge[0]]
             pos_b = self.coords_dict[edge[1]]
             distance = np.abs(pos_b - pos_a)
-            if distance[0] > self.cutoffs[0]:
-                to_remove.add(edge)
-            elif distance[1] > self.cutoffs[1]:
+          
+            if np.any(distance > self.cutoffs):
                 to_remove.add(edge)
         self.graph.remove_edges_from(to_remove)
         return self.graph
@@ -178,7 +187,10 @@ class RingFinder:
             coords_array[i, :] = self.coords_dict[key]
 
         tri_graph = nx.Graph()
-        delaunay_res = Delaunay(coords_array)
+        try:
+            delaunay_res = Delaunay(coords_array)
+        except ValueError as ex:
+            raise RingFinderError(ex.message)
         mapped_simplices = []
         for simplex in delaunay_res.simplices:
             # Convert these indicies to the same ones
@@ -264,6 +276,22 @@ class RingFinder:
             return True
         return False
 
+    def draw_missing(self, main_edge_set, missing_edges):
+        fig, ax = plt.subplots()
+        nx.draw_networkx_edges(self.graph, pos=self.coords_dict, edgelist=[tuple(item) for item in main_edge_set], ax=ax)
+        nx.draw_networkx_edges(self.tri_graph, pos=self.coords_dict, style="dotted", ax=ax)
+        nx.draw_networkx_edges(self.graph, pos=self.coords_dict, edgelist=[tuple(item) for item in missing_edges], ax=ax, edge_color="red", width=1.5)
+        nodes_in_missing_edges = set()
+        for edge in missing_edges:
+            nodes_in_missing_edges.update(edge)
+        
+        nx.draw_networkx_labels(self.graph, pos=self.coords_dict, labels={n: f"{n}" for n in nodes_in_missing_edges})
+        if self.cutoffs is not None:
+            ax.set_xlim(0, self.cutoffs[0]*2.0)
+            ax.set_ylim(0, self.cutoffs[1]*2.0)
+        fig.savefig("./missing_edges.pdf") 
+        plt.close(fig)
+
     def identify_rings(self, max_to_remove: int = None):
         """
         Removes the edges from a triangulated graph that do not exist
@@ -292,12 +320,27 @@ class RingFinder:
                 if not did_flip:
                     # If we didn't flip that one, it's still missing
                     # so we needn't bother with the rest.
-                    raise RuntimeError(
-                        "There are edges in the main graph that do "
-                        + "not exist in the Delauney triangulation: "
-                        + f"{missing_edges}. Is your periodic box "
-                        + "the right size?"
-                    )
+                    # self.draw_missing(main_edge_set, missing_edges)
+
+                    if self.missing_policy == "raise":
+                        missing_edge_str = [str(tuple(item)) for item in missing_edges]
+                        raise RingFinderError(
+                            "There are edges in the main graph that do "
+                            + "not exist in the Delauney triangulation: "
+                            + f"{missing_edge_str}. Is your periodic box "
+                            + "the right size?"
+                        )
+                    elif self.missing_policy == "remove":
+                        self.graph.remove_edge(*edge)
+                    elif self.missing_policy == "add":
+                        self.tri_graph.add_edge(*edge)
+                    elif self.missing_policy == "ignore":
+                        continue
+                    elif self.missing_policy == "return":
+                        # self.current_rings = None
+                        return
+                    else:
+                        raise RuntimeError("bad missing policy -- must be raise, remove, add or ignore")
             # Get here only if we successfully flipped all the edges.
             # Update the tri_edge_set.
             tri_edge_set = {frozenset(edge) for edge in self.tri_graph.edges()}
@@ -480,7 +523,132 @@ class RingFinder:
             edge_lengths.append(np.hypot(*new_gradient))
         return edge_lengths
 
+def convert_to_ring_graph(input_rings: Set[Shape]) -> nx.Graph:
+    """
+    Convert a set of rings into a 'ring graph', with nodes
+    being rings and edges being shared edges between rings.
+    :param input rings: an iterable of  rings
+    """
+    ring_graph = nx.Graph()
+    ring_sizes = dict()
+    ring_centres = dict()
+    input_rings = list(input_rings)
+    for i, ring in enumerate(input_rings):
+        ring_sizes[i] = len(ring)
+        ring_centres[i] = ring.centroid()
+        for j in range(i):
+            other_ring = input_rings[j]
+            if ring.shared_edges(other_ring, 200) != 0:
+                ring_graph.add_edge(i, j)
+                
+    nx.set_node_attributes(ring_graph, ring_sizes, "size")
+    nx.set_node_attributes(ring_graph, ring_centres, "pos")
+    return ring_graph
 
+def topological_rdf(ring_graph: nx.Graph, compute_standard_error=True):
+    """
+    Calculate a topological RDF.
+    
+    A topological RDF is the average size of ring around a ring of 
+    size M, with distance being the number of shared edges away.
+    
+    :param ring_graph: DESCRIPTION
+    :type ring_graph: nx.Graph
+    :return: DESCRIPTION
+    :rtype: TYPE
+    """
+    
+    ring_sizes = nx.get_node_attributes(ring_graph, "size")
+    if not ring_sizes:
+        raise RuntimeError("Graph must have a ring size attribute.")
+    
+    ring_size_rdfs = dict()
+    observed_ring_sizes = set()
+    minimum_path, maximum_path = 0, 0
+    for node in ring_graph.nodes():
+        shortest_paths = nx.single_source_shortest_path(ring_graph, source=node)
+        this_node_size = ring_sizes[node]
+        observed_ring_sizes.add(this_node_size)
+        # initialise a blank dictionary
+        if this_node_size not in ring_size_rdfs:
+            ring_size_rdfs[this_node_size] = defaultdict(list)
+            
+        for other_node, path in shortest_paths.items():
+            # subtract one here because we don't count the last node
+            path_length = len(path) - 1
+            maximum_path = max(maximum_path, path_length)
+            other_node_size = ring_sizes[other_node]
+            ring_size_rdfs[this_node_size][path_length].append(other_node_size)
+            observed_ring_sizes.add(other_node_size)
+    # now average the ring sizes for the rdf
+    mean_ring_rdfs = dict()    
+    std_ring_rdfs = dict()    
+    for ring_size in sorted(list(observed_ring_sizes)):
+        mean_ring_rdfs[ring_size] = [0.0 for _ in range(maximum_path+1)]
+        std_ring_rdfs[ring_size] = [0.0 for _ in range(maximum_path+1)]
+        
+        this_rdf = ring_size_rdfs[ring_size]
+        for distance, ring_sizes in this_rdf.items():
+            if distance == 0:
+                continue
+            array_ring_sizes = np.array(ring_sizes)
+            mean_ring_rdfs[ring_size][distance] = np.mean(array_ring_sizes)
+            if len(ring_sizes) > 1:
+                std_ring_rdfs[ring_size][distance] = np.std(array_ring_sizes, ddof=1)
+                if compute_standard_error:
+                     std_ring_rdfs[ring_size][distance] /= np.sqrt(len(ring_sizes))
+    
+    return mean_ring_rdfs, std_ring_rdfs
+
+def geometric_rdf(ring_graph: nx.Graph, compute_standard_error=True, num_bins=100, box=None):
+    """
+    Calculate a geometric RDF.
+    
+    A geometric RDF is the average size of ring around a ring of 
+    size M, with distance being the the distance between their centroids.
+    
+    :param ring_graph: DESCRIPTION
+    :type ring_graph: nx.Graph
+    :return: DESCRIPTION
+    :rtype: TYPE
+    """
+    bin_size = np.hypot(*box) / num_bins
+    ring_sizes = nx.get_node_attributes(ring_graph, "size")
+    if not ring_sizes:
+        raise RuntimeError("Graph must have a ring size attribute.")
+    
+    positions = nx.get_node_attributes(ring_graph, "pos")
+    if not positions:
+        raise RuntimeError("Graph must have a pos attribute.")
+    ring_size_rdfs = {i: [[] for _ in range(num_bins)] for i in range(21)}
+    for node in ring_graph.nodes():
+        this_node_pos = positions[node]
+        this_ring_size = ring_sizes[node]
+        for other_node in ring_graph.nodes():
+            if node == other_node:
+                 continue
+            other_node_pos = positions[other_node]
+            other_ring_size = ring_sizes[other_node]
+            distance = np.abs(other_node_pos - this_node_pos)
+            if distance[0] > box[0] / 2:
+                distance[0] -= box[0]
+            elif distance[0] < -box[0] / 2:
+                distance[0] += box[0]
+            if distance[1] > box[1] / 2:
+                distance[1] -= box[1]
+            elif distance[1] < -box[1] / 2:
+                distance[1] += box[1]
+            displacement = np.hypot(*distance)
+            bin_id = int(displacement // bin_size)
+            ring_size_rdfs[this_ring_size][bin_id].append(other_ring_size)
+          
+    # now average the ring sizes for the rdf
+    print(ring_size_rdfs)
+    for key, val in ring_size_rdfs.items():
+        for i, sublist in enumerate(val):
+            ring_size_rdfs[key][i] = np.mean(sublist)
+    
+    return ring_size_rdfs
 
 if __name__ == "__main__":
     G: Graph = nx.Graph()
@@ -504,6 +672,9 @@ if __name__ == "__main__":
     AX.set_xlim(-95, 180)
     AX.set_ylim(-95, 180)
     ring_finder.draw_onto(AX, style="dashed")
+    RING_GRAPH = convert_to_ring_graph(ring_finder.current_rings)
+    nx.draw(RING_GRAPH, pos=nx.get_node_attributes(RING_GRAPH, "pos"))
+    MEAN_RDF, STD_RDF = topological_rdf(RING_GRAPH)
     # for perimeter_ring in ring_finder.perimeter_rings:
     #    edgelist = [tuple(item) for item in perimeter_ring.edges]
     # nx.draw_networkx_edges(ring_finder.graph, ax=AX, pos=COORDS_DICT,
@@ -518,3 +689,12 @@ if __name__ == "__main__":
         width=3,
     )
     FIG.savefig("./aperiod_graph.pdf")
+    
+    NEWFIG, NEW_AX = plt.subplots()
+    for ring_size in MEAN_RDF.keys():
+        data = MEAN_RDF[ring_size]
+        top_std = np.array(MEAN_RDF[ring_size]) + np.array(STD_RDF[ring_size])
+        bottom_std = np.array(MEAN_RDF[ring_size]) - np.array(STD_RDF[ring_size])
+        NEW_AX.fill_between([i for i in range(len(data))], bottom_std, top_std, alpha=0.5)
+        NEW_AX.plot([i for i in range(len(data))], data, label=f"{ring_size}")
+    NEW_AX.legend()
