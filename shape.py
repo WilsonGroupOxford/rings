@@ -178,10 +178,17 @@ class Shape:
         nodes = self.to_node_list()
         centroid = np.array([0.0, 0.0])
         for i, node in enumerate(nodes):
-            next_node = nodes[(i+1) % len(nodes)]
-            cross_term = self.coords_dict[node][0] * self.coords_dict[next_node][1] - self.coords_dict[next_node][0] * self.coords_dict[node][1]
-            centroid[0] += (self.coords_dict[node][0] + self.coords_dict[next_node][0]) * cross_term
-            centroid[1] += (self.coords_dict[node][1] + self.coords_dict[next_node][1]) * cross_term
+            next_node = nodes[(i + 1) % len(nodes)]
+            cross_term = (
+                self.coords_dict[node][0] * self.coords_dict[next_node][1]
+                - self.coords_dict[next_node][0] * self.coords_dict[node][1]
+            )
+            centroid[0] += (
+                self.coords_dict[node][0] + self.coords_dict[next_node][0]
+            ) * cross_term
+            centroid[1] += (
+                self.coords_dict[node][1] + self.coords_dict[next_node][1]
+            ) * cross_term
         centroid /= 6 * self.area
         return centroid
 
@@ -209,16 +216,20 @@ class Shape:
             start_node = min(odd_nodes)
         else:
             start_node = min(self.nodes)
-        euler_path = nx.algorithms.euler.eulerian_path(
-            G=ring_graph, source=start_node
-        )
+        euler_path = nx.algorithms.euler.eulerian_path(G=ring_graph, source=start_node)
         node_list = [edge[0] for edge in euler_path]
         node_list = node_list + [node_list[0]]
         return node_list
 
     def shared_edges(self, other_shape, num_nodes):
-        self_modulo_edges = set(frozenset([tuple(edge)[0]% num_nodes, (tuple(edge)[1] % num_nodes)]) for edge in self.edges)
-        other_modulo_edges = set(frozenset([tuple(edge)[0]% num_nodes, (tuple(edge)[1] % num_nodes)]) for edge in other_shape.edges)
+        self_modulo_edges = set(
+            frozenset([tuple(edge)[0] % num_nodes, (tuple(edge)[1] % num_nodes)])
+            for edge in self.edges
+        )
+        other_modulo_edges = set(
+            frozenset([tuple(edge)[0] % num_nodes, (tuple(edge)[1] % num_nodes)])
+            for edge in other_shape.edges
+        )
         return len(self_modulo_edges.intersection(other_modulo_edges))
 
     def _bridges_node_list(self, ring_graph):
@@ -244,11 +255,16 @@ class Shape:
                 # This is a loose node.
                 # Pop it and go about our merry way.
                 continue
-            edges_in_component = set(edge for edge in self.edges
-                                     if list(edge)[0] in component and list(edge)[1] in component)
+            edges_in_component = set(
+                edge
+                for edge in self.edges
+                if list(edge)[0] in component and list(edge)[1] in component
+            )
             # Do we need to pass on is_self_interacting? Its's slower to do so
             # because we have to find the Eulerian path, but probably safer.
-            this_sub_ring = Shape(edges_in_component, self.coords_dict, is_self_interacting=False)
+            this_sub_ring = Shape(
+                edges_in_component, self.coords_dict, is_self_interacting=False
+            )
             sub_ring_node_list = this_sub_ring.to_node_list()
             # We've only found one component, so make that the base of our node list.
             if not node_list:
@@ -274,11 +290,17 @@ class Shape:
                     while True:
                         path_updated = False
                         for other_bridge in bridges:
-                            if bridge_path[-1] == other_bridge[0] and other_bridge[1] not in seen_nodes:
+                            if (
+                                bridge_path[-1] == other_bridge[0]
+                                and other_bridge[1] not in seen_nodes
+                            ):
                                 bridge_path.append(other_bridge[1])
                                 seen_nodes.update(other_bridge)
                                 path_updated = True
-                            elif bridge_path[-1] == other_bridge[1] and other_bridge[0] not in seen_nodes:
+                            elif (
+                                bridge_path[-1] == other_bridge[1]
+                                and other_bridge[0] not in seen_nodes
+                            ):
                                 bridge_path.append(other_bridge[0])
                                 seen_nodes.update(other_bridge)
                                 path_updated = True
@@ -293,8 +315,16 @@ class Shape:
                     # Check this bridge ends in the current connected component
                     if bridge_path[-1] in node_list:
                         insertion_pos = node_list.index(bridge_path[-1])
-                        bridging_node_list = bridge_path[::-1] + sub_ring_node_list[1:] + bridge_path[:-1]
-                        node_list = node_list[:insertion_pos] + bridging_node_list + node_list[insertion_pos:]
+                        bridging_node_list = (
+                            bridge_path[::-1]
+                            + sub_ring_node_list[1:]
+                            + bridge_path[:-1]
+                        )
+                        node_list = (
+                            node_list[:insertion_pos]
+                            + bridging_node_list
+                            + node_list[insertion_pos:]
+                        )
                         added_bridge = True
                         break
                 if not added_bridge:
@@ -431,5 +461,3 @@ class Line(Shape):
     @property
     def area(self):
         raise AttributeError("Lines do not meaningfully have an area")
-
-
