@@ -584,8 +584,8 @@ def topological_rdf(ring_graph: nx.Graph, compute_standard_error=True):
     mean_ring_rdfs = dict()    
     std_ring_rdfs = dict()    
     for ring_size in sorted(list(observed_ring_sizes)):
-        mean_ring_rdfs[ring_size] = [0.0 for _ in range(maximum_path+1)]
-        std_ring_rdfs[ring_size] = [0.0 for _ in range(maximum_path+1)]
+        mean_ring_rdfs[ring_size] = [np.nan for _ in range(maximum_path+1)]
+        std_ring_rdfs[ring_size] = [np.nan for _ in range(maximum_path+1)]
         
         this_rdf = ring_size_rdfs[ring_size]
         for distance, ring_sizes in this_rdf.items():
@@ -623,11 +623,15 @@ def geometric_rdf(ring_graph: nx.Graph, compute_standard_error=True, num_bins=10
     ring_size_rdfs = {i: [[] for _ in range(num_bins)] for i in range(21)}
     for node in ring_graph.nodes():
         this_node_pos = positions[node]
+        if np.any(np.isnan(this_node_pos)):
+            continue
         this_ring_size = ring_sizes[node]
         for other_node in ring_graph.nodes():
             if node == other_node:
                  continue
             other_node_pos = positions[other_node]
+            if np.any(np.isnan(other_node_pos)):
+                continue
             other_ring_size = ring_sizes[other_node]
             distance = np.abs(other_node_pos - this_node_pos)
             if distance[0] > box[0] / 2:
@@ -640,14 +644,14 @@ def geometric_rdf(ring_graph: nx.Graph, compute_standard_error=True, num_bins=10
                 distance[1] += box[1]
             displacement = np.hypot(*distance)
             bin_id = int(displacement // bin_size)
-            ring_size_rdfs[this_ring_size][bin_id].append(other_ring_size)
+            # Make sure we don't try to add a displacement outside of the range of interest
+            if bin_id > 0 and bin_id < num_bins:
+                ring_size_rdfs[this_ring_size][bin_id].append(other_ring_size)
           
     # now average the ring sizes for the rdf
-    print(ring_size_rdfs)
     for key, val in ring_size_rdfs.items():
         for i, sublist in enumerate(val):
             ring_size_rdfs[key][i] = np.mean(sublist)
-    
     return ring_size_rdfs
 
 if __name__ == "__main__":
