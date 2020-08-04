@@ -15,6 +15,7 @@ import numpy as np
 from matplotlib.collections import PatchCollection
 from matplotlib.patches import Polygon
 from scipy.spatial import Delaunay
+import matplotlib.colors as colors
 
 
 try:
@@ -30,16 +31,17 @@ ID = 0
 
 
 class RingFinderError(Exception):
-    """
-    Exception to represent a failure to find any rings.
-    """
+    """Exception to represent a failure to find any rings."""
 
-    def __init__(self, message):
+    def __init__(self, message: str):
+        """Initialise a default Exception object"""
         super().__init__(message)
 
 
 class RingFinder:
     """
+    Find the rings in a planar graph.
+
     A group of subroutines to find rings in a combination
     of a networkx graph and a set of coordinates. The rings
     it identifies correspond to the faces on the polyhedron
@@ -59,6 +61,7 @@ class RingFinder:
     ):
         """
         Initialise and locate the rings in a provided graph.
+
         :param graph: a networkx graph object
         :param coords_dict: a dictionary of node coordinates, with ids
         corresponding to networkx node ids and locations being
@@ -96,6 +99,10 @@ class RingFinder:
     def remove_self_edges(self):
         """
         Removes all edges that loop round on themselves.
+
+        A self edge is one that is (n, n). This screws up the
+        ring finder because it uses frozensets to test edges,
+        so throw these out. They are rings of size... 1?
         """
         to_remove = set()
         for edge in self.graph.edges:
@@ -105,8 +112,9 @@ class RingFinder:
 
     def find_perimeter_rings(self):
         """
-        Locates the perimeter ring of this arrangement,
-        also known as the 'infinite face'.
+        Locate the perimeter ring of this arrangement.
+
+        The perimeter ring is also known as the 'infinite face'.
         Must be called after we've found the other shapes,
         as we use that information to identify the perimeter ring.
         :return perimeter_rings: a set of the perimeter rings
@@ -193,7 +201,7 @@ class RingFinder:
         try:
             delaunay_res = Delaunay(coords_array)
         except ValueError as ex:
-            raise RingFinderError(ex.message)
+            raise RingFinderError(str(ex))
         mapped_simplices = []
         for simplex in delaunay_res.simplices:
             # Convert these indicies to the same ones
@@ -246,7 +254,6 @@ class RingFinder:
         is, and adding the other diagonal.
         :return did_flip: did we successfully flip the edge?
         """
-        simplices_in = []
         # TODO: Same O(n^2) problem here! Even worse because
         # n_triangles is so very very big. Could optimise this
         # by precalculating it.
@@ -369,6 +376,9 @@ class RingFinder:
             tri_edge_set = {frozenset(edge) for edge in self.tri_graph.edges()}
 
         self.removable_edges: Set[Edge] = tri_edge_set.difference(main_edge_set)
+        if not self.removable_edges:
+            # No removeable edges, so bail out.
+            return
         if max_to_remove is None:
             max_to_remove = len(self.removable_edges)
 
@@ -377,6 +387,8 @@ class RingFinder:
         # this function again or manually remove edges. Useful for
         # making animations.
         edges_removed: int = 1
+
+        
         edge: Edge = self.removable_edges.pop()
         while self.removable_edges:
             edges_removed += 1
@@ -461,6 +473,8 @@ class RingFinder:
         self,
         ax,
         cmap_name: str = "viridis",
+        color_by: str = "size",
+        color_reversed:bool = False,
         min_ring_size=None,
         max_ring_size=None,
         **kwargs,
@@ -480,23 +494,23 @@ class RingFinder:
         ax.set_xlim(mins[0], maxes[0])
         ax.set_ylim(mins[1], maxes[1])
         polys = self.as_polygons()
-        sizes = self.ring_sizes()
-
+        
+        if color_by == "size":
+            color_data = self.ring_sizes()
+        elif color_by == "regularity":
+            color_data = [ring.regularity_metric() for ring in self.current_rings]
         # Sometimes we don't get the ring sizes right. The user can provide
         # a lower bound on the maximum ring size and an upper bound on the
         # minimum ring size for more consistent colouring.
-        if max_ring_size is None:
-            max_ring_size = max(sizes)
-        max_ring_size = max(max_ring_size, max(sizes))
-        if min_ring_size is None:
-            min_ring_size = min(sizes)
-        min_ring_size = min(min_ring_size, min(sizes))
-        size_range = max_ring_size + 1 - min_ring_size
-        this_cmap = plt.cm.get_cmap(cmap_name)(np.linspace(0, 1, size_range))
-        colours = [this_cmap[size - min_ring_size] for size in sizes]
+        normalised_data = colors.Normalize(vmin=min_ring_size if min_ring_size is not None else min(color_data),
+                                        vmax=max_ring_size if max_ring_size is not None else max(color_data),
+                                        clip=True)(color_data)
+        if color_reversed:
+            normalised_data = np.ones_like(normalised_data) - normalised_data
+        color_data = plt.cm.get_cmap(cmap_name)(normalised_data)
 
         p = PatchCollection(polys, linewidth=2.0)
-        p.set_color(colours)
+        p.set_color(color_data)
         p.set_linestyle("dotted")
         p.set_edgecolor("black")
         ax.add_collection(p)
@@ -580,10 +594,10 @@ def convert_to_ring_graph(input_rings: Set[Shape]) -> nx.Graph:
 def topological_rdf(ring_graph: nx.Graph, compute_standard_error=True):
     """
     Calculate a topological RDF.
-    
-    A topological RDF is the average size of ring around a ring of 
+
+    A topological RDF is the average size of ring around a ring of
     size M, with distance being the number of shared edges away.
-    
+
     :param ring_graph: DESCRIPTION
     :type ring_graph: nx.Graph
     :return: DESCRIPTION
@@ -596,7 +610,7 @@ def topological_rdf(ring_graph: nx.Graph, compute_standard_error=True):
 
     ring_size_rdfs = dict()
     observed_ring_sizes = set()
-    minimum_path, maximum_path = 0, 0
+    maximum_path = 0
     for node in ring_graph.nodes():
         shortest_paths = nx.single_source_shortest_path(ring_graph, source=node)
         this_node_size = ring_sizes[node]
@@ -638,10 +652,10 @@ def geometric_rdf(
 ):
     """
     Calculate a geometric RDF.
-    
-    A geometric RDF is the average size of ring around a ring of 
+
+    A geometric RDF is the average size of ring around a ring of
     size M, with distance being the the distance between their centroids.
-    
+
     :param ring_graph: DESCRIPTION
     :type ring_graph: nx.Graph
     :return: DESCRIPTION

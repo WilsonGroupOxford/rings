@@ -7,16 +7,13 @@ Created on Mon Nov 11 13:32:13 2019
 """
 
 import copy
-from collections import Counter, defaultdict
-from typing import Any, Dict, NewType, Sequence, Tuple
+from typing import Dict, NewType
+
+from collections import defaultdict
 
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
-
-from matplotlib.collections import PatchCollection
-from matplotlib.patches import Polygon
-from scipy.spatial import Delaunay
 
 try:
     from .ring_finder import RingFinder
@@ -77,6 +74,17 @@ class PeriodicRingFinder(RingFinder):
         self.current_rings = self.find_unique_rings()
 
     def add_ring_images(self, original_coords):
+        """
+        Ensure that the rings occupy the right periodic images.
+        
+        Walks around each ring and checks if the edges are greater
+        than the periodic cutoff. In that case, checks all periodic
+        images and tries to find an 'image node' that is less than
+        one cutoff away. If we can't, print an error.
+        
+        :param original_coords: the original coordinates before the periodicity
+        was applied to look for node images.
+        """
         cell_offsets = [
             (0, 0),
             (1, 1),
@@ -90,6 +98,17 @@ class PeriodicRingFinder(RingFinder):
         ]
 
         def _edge_is_too_long(_u_of_edge, _v_of_edge):
+            """
+            Return if an edge is too long.
+            
+            Takes two nodes, u and v, making up one edge, and
+            checks if the distance between them is greater than the cutoff.
+            This is not sensitive to order.
+            
+            :param _u_of_edge: a node key of u, the first node in the edge
+            :param _v_of_edge: a node key of the other node in the edge
+            :return: whether the edge is longer than cutoffs in x or y.
+            """
             distance = np.abs(
                 self.coords_dict[_u_of_edge] - self.coords_dict[_v_of_edge]
             )
@@ -110,6 +129,9 @@ class PeriodicRingFinder(RingFinder):
                 for i in range(2 * len(node_list)):
                     u_of_edge = node_list[i % len(node_list)]
                     v_of_edge = node_list[(i + 1) % len(node_list)]
+                    
+                    # If we can't find this in the coordinates dictionary,
+                    # add in an entry copied from the original coordinates.
                     if u_of_edge not in self.coords_dict:
                         original_u = u_of_edge % num_nodes
                         u_cell_offset = u_of_edge // num_nodes
@@ -117,6 +139,8 @@ class PeriodicRingFinder(RingFinder):
                             np.array(cell_offsets[u_cell_offset]) * 2 * self.cutoffs
                         )
 
+                    # If we can't find this in the coordinates dictionary,
+                    # add in an entry copied from the original coordinates.
                     if v_of_edge not in self.coords_dict:
                         original_v = v_of_edge % num_nodes
                         v_cell_offset = v_of_edge // num_nodes
@@ -124,6 +148,9 @@ class PeriodicRingFinder(RingFinder):
                             np.array(cell_offsets[v_cell_offset]) * 2 * self.cutoffs
                         )
 
+                    # If it's too long, check each possible node image
+                    # and see if we can draw an edge that is not too
+                    # long.
                     if _edge_is_too_long(u_of_edge, v_of_edge):
                         option_v_poses = [
                             self.coords_dict[v_of_edge]
@@ -143,16 +170,20 @@ class PeriodicRingFinder(RingFinder):
                         node_list[(i + 1) % len(node_list)] = new_v
                         if new_v != v_of_edge:
                             unchanged = False
+                # If we haven't had to change any edges, we can
+                # leave.
                 if unchanged:
                     break
                 iters += 1
                 if iters > 10:
+                    # We can't seem to find a valid walk around this ring.
+                    # Print a warning and go about our lives merrily --
+                    # there is something wrong in the network.
                     print(
                         "Could not find a periodic walk around"
                         + str([tuple(item) for item in ring.edges])
                     )
                     break
-            new_edges = node_list_to_edges(node_list, is_ring=True)
             new_ring = Shape(
                 node_list_to_edges(node_list, is_ring=True),
                 self.coords_dict,

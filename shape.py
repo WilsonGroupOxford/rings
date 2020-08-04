@@ -14,9 +14,11 @@ import numpy as np
 from collections import deque
 from matplotlib.patches import Polygon
 import copy
+import scipy.spatial
 
 Node = NewType("Node", int)
 Coord = NewType("Coord", np.array)
+
 
 
 def calculate_polygon_area(
@@ -92,6 +94,7 @@ class Shape:
         self.coords_dict = coords_dict
         self._area = None
         self._is_self_interacting = is_self_interacting
+        self._node_list = None
 
     def bounding_box(self) -> np.array:
         """
@@ -159,6 +162,68 @@ class Shape:
         nodes = {node for edge in self.edges for node in edge}
         return nodes
 
+    def convex_hull_area(self):
+        """
+        Calculates the area of the convex hull of this polygon.
+        """
+        _coords_arr = np.vstack([self.coords_dict[node] for node in self.nodes])
+        return float(scipy.spatial.ConvexHull(_coords_arr).volume)
+        
+    def convex_hull_perimeter(self):
+        """
+        Calculates the perimeter of the convex hull of this polygon.
+        """
+        _coords_arr = np.vstack([self.coords_dict[node] for node in self.nodes])
+        # careful of scipy horror -- area is perimeter, and this is undocumented.
+        return float(scipy.spatial.ConvexHull(_coords_arr).area)
+    
+    def solidity_metric(self):
+        """
+        Calculate a metric between 0 and 1 representing how solid this polygon is/
+        
+        This is calculated as the ratio between the current
+        area and the area of the convex hull of these points.
+        In case of numerical issues, clips to being between 0 and 1.
+        """
+        return np.clip(self.area / self.convex_hull_area(), 0, 1)
+        
+    def convexity_metric(self):
+        """
+        Calculate a metric between 0 and 1 representing how convex this polygon is.
+        this is calculated as the ratio between the current
+        perimeter and the perimeter of the convex hull of these points.
+        In case of numerical issues, clips to being between 0 and 1.
+        """
+        # print(f"Our perimeter is {self.perimeter}, the convex hull perimeter is {self.convex_hull_perimeter()}")
+        return np.clip(self.convex_hull_perimeter() / self.perimeter, 0, 1)
+    
+    def balanced_repartition_metric(self) -> float:
+        """
+        Calculates how even the shape is in the x and y directions.
+        
+        See 
+        'Robust shape regularity criteria for superpixel evaluation'
+        Giraud, Remi and Ta, Vinh Thong and Papadakis, Nicolas
+        Proceedings - International Conference on Image Processing, ICIP
+        September 2017
+        """
+        _coords_arr = np.vstack([self.coords_dict[node] for node in self.nodes])
+        coords_std = np.std(_coords_arr, axis=0, ddof=1)
+        return np.sqrt(np.min(coords_std) / np.max(coords_std))
+        
+    def regularity_metric(self) -> float:
+        return self.balanced_repartition_metric() * self.convexity_metric() * self.solidity_metric()
+    
+    @property
+    def perimeter(self):
+        perimeter = 0.0
+        for edge in self.edges:
+            edge = tuple(edge)
+            diff = self.coords_dict[edge[1]] - self.coords_dict[edge[0]]
+            length = np.hypot(*diff)
+            perimeter += length
+        return perimeter
+    
     @property
     def area(self):
         """
@@ -335,16 +400,24 @@ class Shape:
 
     def to_node_list(self):
         """
-        Turns the set of edges into an ordered list. e.g.
-        the triangle {{0, 1}, {1, 2}, {2, 0}} becomes
+        Turns the set of edges into an ordered list.
+        
+        e.g. the triangle {{0, 1}, {1, 2}, {2, 0}} becomes
         [0, 1, 2]. It puts the minimum indexed node first
         for consistent ordering. If we have coordinate information,
         this will apply a consistent anticlockwise winding to
         the nodes. If we do not have coordination information,
         this applies an ordering starting at the minimum id
         node and stepping to the next smallest numbered node.
+        
+        This is used to calculate the area of shapes and to draw them.
+        
+        It is memoised, so be careful if you change shape.edges.
         :return node_list: a connection ordered list of nodes.
         """
+        
+        if self._node_list is not None:
+            return self._node_list
 
         if self._is_self_interacting:
 
@@ -394,8 +467,8 @@ class Shape:
                 # is wrong. That's easily fixed by reversing the list,
                 # and then putting the smallest element at the front.
                 node_list = list(reversed(node_list))
-                # node_list = node_list[-1:] + node_list[:-1]
-        return node_list
+        self._node_list = node_list
+        return self._node_list
 
     def to_polygon(self):
         """
@@ -461,3 +534,29 @@ class Line(Shape):
     @property
     def area(self):
         raise AttributeError("Lines do not meaningfully have an area")
+
+def generate_regular_polygon(num_sides:int, side_length:float=1.0) -> Shape:
+    """
+    Generate a regular polygon with num_sides sides, centered at 0, 0.
+    
+    :param num_sides: the number of sides the polygon has
+    :param side_length: the length of each side
+    :return: a shape with num_sides sides
+    """
+    coords = {i: np.array([side_length * np.cos(2*np.pi * i / num_sides),
+                           side_length * np.sin(2*np.pi * i / num_sides)])
+              for i in range(num_sides)}
+    edges = [(i, (i + 1) % num_sides) for i in range(num_sides)]
+    return Shape(edges, coords)
+
+if __name__ == "__main__":
+    COORDS = {0: np.array([0.0, 0.0]),
+              1: np.array([1.0, 0.0]),
+              2: np.array([1.0, 1.0])}
+    TRIANGLE = Shape([(0, 1), (1, 2), (2, 0)], COORDS)
+    print(TRIANGLE.area, TRIANGLE.convex_hull_area(), TRIANGLE.solidity_metric())
+    print(TRIANGLE.perimeter, TRIANGLE.convex_hull_perimeter(), TRIANGLE.convexity_metric()) 
+    for NUM_SIDES in range(3, 10):
+        SHAPE = generate_regular_polygon(NUM_SIDES)
+        print(SHAPE.edges, SHAPE.regularity_metric())
+    
