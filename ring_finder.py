@@ -35,7 +35,7 @@ class RingFinderError(Exception):
 
     def __init__(self, message: str):
         """Initialise a default Exception object"""
-        super().__init__(message)
+        super().__init__(f"RingFinderError: {message}")
 
 
 class RingFinder:
@@ -526,9 +526,9 @@ class RingFinder:
             ax=ax,
             pos=self.coords_dict,
             edge_color="black",
-            zorder=1000,
+            #zorder=1000,
             width=2.5,
-            edge_list=edges_to_draw,
+            edgelist=edges_to_draw,
             **kwargs,
         )
         nx.draw_networkx_nodes(

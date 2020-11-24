@@ -41,7 +41,7 @@ class PeriodicRingFinder(RingFinder):
         periodic_graph = copy.deepcopy(graph)
         periodic_coords = copy.deepcopy(coords_dict)
         self.cell = cell
-        self.cutoffs = cell / 2.0
+        self.cutoffs = (cell[:, 1] - cell[:, 0]) / 2.0
         self.coords_dict: Dict[Node, Coord] = copy.deepcopy(coords_dict)
         self.original_nodes = {key for key in self.coords_dict.keys()}
         self.perimeter_rings = None
@@ -49,7 +49,7 @@ class PeriodicRingFinder(RingFinder):
         super().__init__(
             graph=self.graph,
             coords_dict=self.coords_dict,
-            cutoffs=cell / 2.0,
+            cutoffs=self.cutoffs,
             find_perimeter=True,
             missing_policy=self.missing_policy,
         )
@@ -339,7 +339,7 @@ class PeriodicRingFinder(RingFinder):
             a_pos = self.coords_dict[edge_a]
             b_pos = self.coords_dict[edge_b]
             for i, cell_offset in enumerate(cell_offsets):
-                offset = np.array(cell_offset) * self.cell
+                offset = (np.array(cell_offset) * self.cell[:, 1]) + self.cell[:, 0]
                 new_edge_a = (i * num_nodes) + edge_a
                 new_edge_b = (i * num_nodes) + edge_b
                 new_a_pos = a_pos + offset

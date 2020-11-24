@@ -95,10 +95,10 @@ class TestRingFinder:
         G.add_edges_from(inner_sq_edges)
         G.add_edge(0, 4)
         outer_sq_coords.update(inner_sq_coords)
-        fig, ax = plt.subplots()
+        # fig, ax = plt.subplots()
         ring_finder = RingFinder(G, outer_sq_coords)
-        ring_finder.draw_onto(ax)
-        assert [len(ring) for ring in ring_finder.current_rings] == [9, 4]
+         #ring_finder.draw_onto(ax)
+        assert set([len(ring) for ring in ring_finder.current_rings]) == {9, 4}
 
 
 class TestPeriodicRingFinder:
