@@ -18,6 +18,7 @@ from scipy.spatial import Delaunay
 import matplotlib.colors as colors
 
 
+
 try:
     from .shape import Shape, node_list_to_edges
 except ImportError:
@@ -98,7 +99,7 @@ class RingFinder:
 
     def remove_self_edges(self):
         """
-        Removes all edges that loop round on themselves.
+        Remove all edges that loop round on themselves.
 
         A self edge is one that is (n, n). This screws up the
         ring finder because it uses frozensets to test edges,
@@ -159,10 +160,10 @@ class RingFinder:
 
     def remove_long_edges(self):
         """
-        Remove any edges that are longer than
-        a set of cutoffs, useful to make a periodic cell
-        aperiodic.
-        :return graph: a graph minus the edges that are too long. Note that this mutates the original graph, so the return value can be ignored.
+        Remove any edges that are longer than a set of cutoffs.
+        This is useful to make a periodic cell aperiodic.
+        :return graph: a graph minus the edges that are too long.
+        Note that this mutates the original graph, so the return value can be ignored.
         """
         to_remove = set()
         for edge in self.graph.edges():
@@ -201,6 +202,8 @@ class RingFinder:
         try:
             delaunay_res = Delaunay(coords_array)
         except ValueError as ex:
+            raise RingFinderError(str(ex))
+        except RuntimeError as ex:
             raise RingFinderError(str(ex))
         mapped_simplices = []
         for simplex in delaunay_res.simplices:
@@ -388,7 +391,7 @@ class RingFinder:
         # making animations.
         edges_removed: int = 1
 
-        
+
         edge: Edge = self.removable_edges.pop()
         while self.removable_edges:
             edges_removed += 1
@@ -494,7 +497,7 @@ class RingFinder:
         ax.set_xlim(mins[0], maxes[0])
         ax.set_ylim(mins[1], maxes[1])
         polys = self.as_polygons()
-        
+
         if color_by == "size":
             color_data = self.ring_sizes()
         elif color_by == "regularity":

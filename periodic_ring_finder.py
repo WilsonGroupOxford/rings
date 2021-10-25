@@ -18,7 +18,7 @@ import numpy as np
 try:
     from .ring_finder import RingFinder
     from .shape import Shape, node_list_to_edges
-except ImportError:
+except ModuleNotFoundError:
     from ring_finder import RingFinder
     from shape import Shape, node_list_to_edges
 
