@@ -21,7 +21,9 @@ try:
 except ModuleNotFoundError:
     from ring_finder import RingFinder
     from shape import Shape, node_list_to_edges
-
+except ImportError:
+    from ring_finder import RingFinder
+    from shape import Shape, node_list_to_edges
 
 Node = NewType("Node", int)
 Graph = NewType("Graph", nx.Graph)

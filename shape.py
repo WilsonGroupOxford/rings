@@ -153,6 +153,26 @@ class Shape:
         )
         return new_shape
 
+    def normal_vector(self, embedding=None):
+        if embedding is None:
+            embedding = self.coords_dict
+        mean_normal = np.zeros(3, dtype=float)
+        node_list = self.to_node_list()
+        for idx in range(len(node_list)):
+            node = node_list[idx]
+            dim = len(embedding[node])
+            neighbours = node_list[idx - 1], node_list[(idx + 1) % len(node_list)]
+            vec_a, vec_b = np.zeros(3, dtype=float), np.zeros(3, dtype=float)
+            vec_a[:dim] = embedding[neighbours[0]] - embedding[node]
+            vec_b[:dim] = embedding[neighbours[1]] - embedding[node]
+
+            cross = np.cross(vec_a, vec_b)
+            cross /= np.linalg.norm(cross)
+            mean_normal += cross
+        mean_normal /= np.linalg.norm(mean_normal)
+        return mean_normal
+
+
     @property
     def nodes(self):
         """
@@ -168,7 +188,7 @@ class Shape:
         """
         _coords_arr = np.vstack([self.coords_dict[node] for node in self.nodes])
         return float(scipy.spatial.ConvexHull(_coords_arr).volume)
-        
+
     def convex_hull_perimeter(self):
         """
         Calculates the perimeter of the convex hull of this polygon.
@@ -176,17 +196,17 @@ class Shape:
         _coords_arr = np.vstack([self.coords_dict[node] for node in self.nodes])
         # careful of scipy horror -- area is perimeter, and this is undocumented.
         return float(scipy.spatial.ConvexHull(_coords_arr).area)
-    
+
     def solidity_metric(self):
         """
         Calculate a metric between 0 and 1 representing how solid this polygon is/
-        
+
         This is calculated as the ratio between the current
         area and the area of the convex hull of these points.
         In case of numerical issues, clips to being between 0 and 1.
         """
         return np.clip(self.area / self.convex_hull_area(), 0, 1)
-        
+
     def convexity_metric(self):
         """
         Calculate a metric between 0 and 1 representing how convex this polygon is.
@@ -196,12 +216,12 @@ class Shape:
         """
         # print(f"Our perimeter is {self.perimeter}, the convex hull perimeter is {self.convex_hull_perimeter()}")
         return np.clip(self.convex_hull_perimeter() / self.perimeter, 0, 1)
-    
+
     def balanced_repartition_metric(self) -> float:
         """
         Calculates how even the shape is in the x and y directions.
-        
-        See 
+
+        See
         'Robust shape regularity criteria for superpixel evaluation'
         Giraud, Remi and Ta, Vinh Thong and Papadakis, Nicolas
         Proceedings - International Conference on Image Processing, ICIP
@@ -210,10 +230,10 @@ class Shape:
         _coords_arr = np.vstack([self.coords_dict[node] for node in self.nodes])
         coords_std = np.std(_coords_arr, axis=0, ddof=1)
         return np.sqrt(np.min(coords_std) / np.max(coords_std))
-        
+
     def regularity_metric(self) -> float:
         return self.balanced_repartition_metric() * self.convexity_metric() * self.solidity_metric()
-    
+
     @property
     def perimeter(self):
         perimeter = 0.0
@@ -223,7 +243,7 @@ class Shape:
             length = np.hypot(*diff)
             perimeter += length
         return perimeter
-    
+
     @property
     def area(self):
         """
@@ -401,7 +421,7 @@ class Shape:
     def to_node_list(self):
         """
         Turns the set of edges into an ordered list.
-        
+
         e.g. the triangle {{0, 1}, {1, 2}, {2, 0}} becomes
         [0, 1, 2]. It puts the minimum indexed node first
         for consistent ordering. If we have coordinate information,
@@ -409,13 +429,13 @@ class Shape:
         the nodes. If we do not have coordination information,
         this applies an ordering starting at the minimum id
         node and stepping to the next smallest numbered node.
-        
+
         This is used to calculate the area of shapes and to draw them.
-        
+
         It is memoised, so be careful if you change shape.edges.
         :return node_list: a connection ordered list of nodes.
         """
-        
+
         if self._node_list is not None:
             return self._node_list
 
@@ -538,7 +558,7 @@ class Line(Shape):
 def generate_regular_polygon(num_sides:int, side_length:float=1.0) -> Shape:
     """
     Generate a regular polygon with num_sides sides, centered at 0, 0.
-    
+
     :param num_sides: the number of sides the polygon has
     :param side_length: the length of each side
     :return: a shape with num_sides sides
@@ -555,8 +575,8 @@ if __name__ == "__main__":
               2: np.array([1.0, 1.0])}
     TRIANGLE = Shape([(0, 1), (1, 2), (2, 0)], COORDS)
     print(TRIANGLE.area, TRIANGLE.convex_hull_area(), TRIANGLE.solidity_metric())
-    print(TRIANGLE.perimeter, TRIANGLE.convex_hull_perimeter(), TRIANGLE.convexity_metric()) 
+    print(TRIANGLE.perimeter, TRIANGLE.convex_hull_perimeter(), TRIANGLE.convexity_metric())
     for NUM_SIDES in range(3, 10):
         SHAPE = generate_regular_polygon(NUM_SIDES)
         print(SHAPE.edges, SHAPE.regularity_metric())
-    
+
